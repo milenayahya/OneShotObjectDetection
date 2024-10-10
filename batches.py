@@ -53,6 +53,7 @@ def visualize_objectnesses_batch(image_batch, source_boxes, source_pixel_values,
         objectness_threshold = np.partition(current_objectnesses, -top_k)[-top_k]
         # print(objectness_threshold)  
         
+
         for i, (box, objectness) in enumerate(zip(current_boxes, current_objectnesses)):
             if objectness < objectness_threshold:
                 continue
@@ -92,7 +93,7 @@ def visualize_objectnesses_batch(image_batch, source_boxes, source_pixel_values,
         
 
 
-def zero_shot_detection(source_image_paths, model, processor, topk, batch_size, visualize=True):
+def zero_shot_detection(source_image_paths, model, processor, topk, batch_size,visualize, query_selection= False):
 
     source_class_embeddings = []
     images = load_image_group(source_image_paths)
@@ -114,6 +115,24 @@ def zero_shot_detection(source_image_paths, model, processor, topk, batch_size, 
         source_class_embeddings.append(source_class_embedding)
         if visualize:
             visualize_objectnesses_batch(image_batch, source_boxes, source_pixel_values, objectnesses, topk)
+            
+        if query_selection:
+            query_embeddings = []
+            indexes= []
+            # Remove batch dimension for each image in the batch
+            for i in range(min(batch_size, len(source_boxes))): 
+                current_source_boxes = source_boxes[i].detach().numpy()
+                current_objectnesses = torch.sigmoid(objectnesses[i].detach()).numpy()
+                current_class_embedding = source_class_embedding[i].detach().numpy()
+                
+                # Extract the query embedding for the current image based on the given index
+                query_embedding = current_class_embedding[np.argmax(current_objectnesses)]
+                indexes.append(np.argmax(current_objectnesses))
+                query_embeddings.append(query_embedding)
+       
+    if query_selection:
+        return indexes, query_embeddings
+
 
 def find_query_patches_batches(source_image_paths, model, processor, indexes, batch_size):
     query_embeddings = []
@@ -142,7 +161,7 @@ def find_query_patches_batches(source_image_paths, model, processor, indexes, ba
 
     return query_embeddings
 
-def one_shot_detection_batches(target_image_paths, model, processor, query_embeddings, threshold, batch_size, visualize= True, topk=None):
+def one_shot_detection_batches(target_image_paths, model, processor, query_embeddings, threshold, batch_size, visualize, topk=None):
 
     images = load_image_group(target_image_paths)
     all_batch_results = [] 
@@ -245,25 +264,29 @@ if __name__ == "__main__":
 
     source_image_paths = 'query_images/'
     target_image_paths = 'test_images/'
-    many_images = True
-
 
     # Image-Conditioned Object Detection
     processor = Owlv2Processor.from_pretrained("google/owlv2-base-patch16-ensemble")
     model = Owlv2ForObjectDetection.from_pretrained("google/owlv2-base-patch16-ensemble")
 
-    # Find the objects in the query images
-    batch_size = 1
+    batch_size = 4
     top_objectness = 3
-    zero_shot_detection(source_image_paths, model, processor, top_objectness, batch_size, visualize=True)
-
-    indexes = [1523, 1700, 1465, 1344]
-    query_embeddings = find_query_patches_batches(source_image_paths, model, processor, indexes, batch_size)
-  
+    manual_query_selection = False
     threshold = 0.96
-    results = one_shot_detection_batches(target_image_paths,model,processor,query_embeddings, threshold, batch_size)
+    visualize = True
+
+    # Find the objects in the query images
+    if manual_query_selection:
+        zero_shot_detection(source_image_paths, model, processor, top_objectness, batch_size, visualize, query_selection=False)
+        indexes = [1523, 1700, 1465, 1344]
+        query_embeddings = find_query_patches_batches(source_image_paths, model, processor, indexes, batch_size)
+
+    else: 
+        indexes, query_embeddings = zero_shot_detection(source_image_paths, model, processor, top_objectness, batch_size, visualize, query_selection=True)
+    
+    results = one_shot_detection_batches(target_image_paths,model,processor,query_embeddings, threshold, batch_size, visualize)
     print(results)
 
-
+    
 
     
