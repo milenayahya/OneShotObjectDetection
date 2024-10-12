@@ -9,10 +9,32 @@ from transformers.utils.constants import OPENAI_CLIP_MEAN, OPENAI_CLIP_STD # typ
 from matplotlib import rcParams
 import matplotlib.pyplot as plt
 from scipy.special import expit as sigmoid
+import warnings
+import tensorflow as tf
 
 # Colors for bounding boxes for different source queries
 colors = ['red', 'green', 'blue', 'purple'] 
 linestyles = ['-', '-', '--', '-' ]
+ID2CLASS = {
+    1: "apple",
+    2: "cat",
+    3: "dog",
+    4: "usb"
+}
+
+CLASS2ID = {v: k for k,v in ID2CLASS.items()}
+
+def nms_tf(bboxes, scores, threshold):
+    bboxes = tf.cast(bboxes,dtype=tf.float32)
+    x_min,y_min,x_max,y_max = tf.unstack(bboxes,axis=1)
+    bboxes = tf.stack([y_min,x_min,y_max,x_max],axis=1)
+    bbox_indices = tf.image.non_max_suppression(bboxes,scores, 100, iou_threshold=threshold)
+    filtered_bboxes = tf.gather(bboxes,bbox_indices)
+    scores = tf.gather(scores,bbox_indices)
+    y_min,x_min,y_max,x_max = tf.unstack(filtered_bboxes,axis=1)
+    filtered_bboxes = tf.stack([x_min,y_min,x_max,y_max],axis=1)
+    
+    return filtered_bboxes, scores   
 
 def get_preprocessed_image(pixel_values):
     pixel_values = pixel_values.squeeze().numpy()
@@ -30,6 +52,17 @@ def load_image_group(image_dir):
             image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
             if image is not None:
                 images.append(image)
+    return images
+
+def load_query_image_group(image_dir):
+    images = []
+    for image_name in os.listdir(image_dir):
+        if image_name.endswith(('.png', '.jpg', '.jpeg', '.bmp')):
+            category = ID2CLASS[int(image_name.split('_')[0])]
+            image_path = os.path.join(image_dir, image_name)
+            image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+            if image is not None:
+                images.append((image, category))
     return images
 
 def visualize_objectnesses_batch(image_batch, source_boxes, source_pixel_values, objectnesses, topk):
@@ -96,7 +129,9 @@ def visualize_objectnesses_batch(image_batch, source_boxes, source_pixel_values,
 def zero_shot_detection(source_image_paths, model, processor, topk, batch_size,visualize, query_selection= False):
 
     source_class_embeddings = []
-    images = load_image_group(source_image_paths)
+    images, classes = zip(*load_query_image_group(source_image_paths))
+    images = list(images)
+    classes = list(classes)
 
     for batch_start in range(0,len(images),batch_size):
         image_batch = images[batch_start:batch_start + batch_size]
@@ -131,12 +166,14 @@ def zero_shot_detection(source_image_paths, model, processor, topk, batch_size,v
                 query_embeddings.append(query_embedding)
        
     if query_selection:
-        return indexes, query_embeddings
+        return indexes, query_embeddings, classes
 
 
 def find_query_patches_batches(source_image_paths, model, processor, indexes, batch_size):
     query_embeddings = []
-    images = load_image_group(source_image_paths)
+    images, classes = zip(*load_query_image_group(source_image_paths))
+    images = list(images)
+    classes = list(classes)
 
     for batch_start in range(0,len(images),batch_size):
         image_batch = images[batch_start:batch_start + batch_size]
@@ -159,9 +196,9 @@ def find_query_patches_batches(source_image_paths, model, processor, indexes, ba
             query_embedding = current_class_embedding[indexes[batch_start + i]]
             query_embeddings.append(query_embedding)
 
-    return query_embeddings
+    return query_embeddings, classes
 
-def one_shot_detection_batches(target_image_paths, model, processor, query_embeddings, threshold, batch_size, visualize, topk=None):
+def one_shot_detection_batches(target_image_paths, model, processor, query_embeddings, classes, threshold, batch_size, visualize, topk=None):
 
     images = load_image_group(target_image_paths)
     all_batch_results = [] 
@@ -177,7 +214,8 @@ def one_shot_detection_batches(target_image_paths, model, processor, query_embed
         target_boxes = model.box_predictor(
             feature_map.reshape(b, h * w, d), feature_map=feature_map
         )
-
+        # Contains the predicted boxes for each image in the batch.
+        # It is a list of lists
         reshaped_feature_map = feature_map.view(b, h * w, d) 
 
         batch_results = [] 
@@ -185,6 +223,8 @@ def one_shot_detection_batches(target_image_paths, model, processor, query_embed
         # Process each image in the batch
         for image_idx in range(b):  
             unnormalized_image = get_preprocessed_image(target_pixel_values[image_idx])
+            class_wise_boxes = {cls: [] for cls in classes} # dictionary of lists
+            class_wise_scores = {cls: [] for cls in classes}
 
             if visualize:
                 fig, ax = plt.subplots(1, 1, figsize=(8, 8))
@@ -198,7 +238,6 @@ def one_shot_detection_batches(target_image_paths, model, processor, query_embed
                     reshaped_feature_map,
                     query_embedding_tensor
                 )[0]
-
                 target_boxes_np = target_boxes[image_idx].detach().numpy()
                 target_logits = target_class_predictions[image_idx].detach().numpy()
 
@@ -209,43 +248,57 @@ def one_shot_detection_batches(target_image_paths, model, processor, query_embed
                     scores = sigmoid(target_logits[:, 0])
                     top_indices = np.where(scores > threshold)[0]
                     scores = scores[top_indices]
+                    
 
-                batch_query_results = {
-                    'batch_index': batch_start // batch_size + 1,
-                    'query_index': idx + 1,
-                    'scores': scores,
-                    'boxes': target_boxes_np[top_indices]
-                }
-                batch_results.append(batch_query_results)
+                # Accumulate boxes and scores for each class
+                class_wise_boxes[classes[idx]].extend(target_boxes_np[top_indices])
+                class_wise_scores[classes[idx]].extend(scores)
 
-                # Plot bounding boxes for each query
-                if visualize:
-                    for i, top_ind in enumerate(top_indices):
-                        cx, cy, w, h = target_boxes_np[top_ind]
+            final_boxes = []
+            final_scores = []
+            final_classes = []
 
-                        # Plot the bounding box with the respective color
-                        ax.plot(
-                            [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
-                            [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
-                            color=colors[idx],  # Use a different color for each query
-                            alpha=0.5,
-                            linestyle=linestyles[idx]
-                        )
+            for cls in classes: 
+                if class_wise_boxes[cls]:
+                    # Apply NMS on the bounding boxes of the same class
+                    bboxes_tensor = tf.convert_to_tensor(class_wise_boxes[cls], dtype=tf.float32)
+                    pscores_tensor = tf.convert_to_tensor(class_wise_scores[cls], dtype=tf.float32)
+                    nms_boxes, nms_scores = nms_tf(bboxes_tensor, pscores_tensor, 0.3)
+                    nms_boxes = nms_boxes.numpy()
+                    nms_scores = nms_scores.numpy()
 
-                        # Add text for the score
-                        ax.text(
-                            cx - w / 2 + 0.015,
-                            cy + h / 2 - 0.015,
-                            f'Query {idx+1} Score: {scores[i]:1.2f}',  # Indicate which query the result is from
-                            ha='left',
-                            va='bottom',
-                            color='black',
-                            bbox={
-                                'facecolor': 'white',
-                                'edgecolor': colors[idx],  # Use respective color
-                                'boxstyle': 'square,pad=.3',
-                            },
-                        )
+                    final_boxes.extend(nms_boxes)
+                    final_scores.extend(nms_scores)
+                    final_classes.extend([cls] * len(nms_boxes))
+
+            # Plot bounding boxes for each image
+            if visualize:
+                for i, (box, score, cls) in enumerate(zip(final_boxes, final_scores, final_classes)):
+                    cx, cy, w, h = box
+
+                    # Plot the bounding box with the respective color
+                    ax.plot(
+                        [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
+                        [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
+                        color=colors[CLASS2ID[cls]-1],  # Use a different color for each query
+                        alpha=0.5,
+                        linestyle=linestyles[CLASS2ID[cls]-1]
+                    )
+
+                    # Add text for the score
+                    ax.text(
+                        cx - w / 2 + 0.015,
+                        cy + h / 2 - 0.015,
+                        f'Class: {cls} Score: {score:1.2f}',  # Indicate which query the result is from
+                        ha='left',
+                        va='bottom',
+                        color='black',
+                        bbox={
+                            'facecolor': 'white',
+                            'edgecolor': colors[CLASS2ID[cls]-1],  # Use respective color
+                            'boxstyle': 'square,pad=.3',
+                        },
+                    )
 
 
             if visualize:
@@ -253,6 +306,16 @@ def one_shot_detection_batches(target_image_paths, model, processor, query_embed
                 ax.set_ylim(1, 0)
                 ax.set_title(f'One-Shot Object Detection (Batch {batch_start // batch_size + 1}, Image {image_idx + 1})')
                 plt.show()
+
+            batch_query_results = {
+                        'batch_index': batch_start // batch_size + 1,
+                        'image_idx': image_idx + batch_start,
+                        'boxes': final_boxes,
+                        'scores': final_scores,
+                        'classes': final_classes
+                    }
+            batch_results.append(batch_query_results)
+
 
         all_batch_results.append(batch_results)
 
@@ -271,22 +334,23 @@ if __name__ == "__main__":
 
     batch_size = 4
     top_objectness = 3
-    manual_query_selection = False
+    manual_query_selection = True
     threshold = 0.96
     visualize = True
 
     # Find the objects in the query images
     if manual_query_selection:
-        zero_shot_detection(source_image_paths, model, processor, top_objectness, batch_size, visualize, query_selection=False)
+        #zero_shot_detection(source_image_paths, model, processor, top_objectness, batch_size, visualize, query_selection=False)
         indexes = [1523, 1700, 1465, 1344]
-        query_embeddings = find_query_patches_batches(source_image_paths, model, processor, indexes, batch_size)
+        query_embeddings, classes = find_query_patches_batches(source_image_paths, model, processor, indexes, batch_size)
 
     else: 
-        indexes, query_embeddings = zero_shot_detection(source_image_paths, model, processor, top_objectness, batch_size, visualize, query_selection=True)
-    
-    results = one_shot_detection_batches(target_image_paths,model,processor,query_embeddings, threshold, batch_size, visualize)
-    print(results)
+        indexes, query_embeddings, classes = zero_shot_detection(source_image_paths, model, processor, top_objectness, batch_size, visualize, query_selection=True)
 
+    print(indexes, classes)
     
+    # Detect query objects in test images
+    results = one_shot_detection_batches(target_image_paths,model,processor,query_embeddings, classes, threshold, batch_size, visualize)
+    print(results)
 
     
