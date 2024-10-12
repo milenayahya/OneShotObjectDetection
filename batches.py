@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from scipy.special import expit as sigmoid
 import warnings
 import tensorflow as tf
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 # Colors for bounding boxes for different source queries
 colors = ['red', 'green', 'blue', 'purple'] 
@@ -132,6 +133,8 @@ def zero_shot_detection(source_image_paths, model, processor, topk, batch_size,v
     images, classes = zip(*load_query_image_group(source_image_paths))
     images = list(images)
     classes = list(classes)
+    query_embeddings = []
+    indexes= []
 
     for batch_start in range(0,len(images),batch_size):
         image_batch = images[batch_start:batch_start + batch_size]
@@ -152,10 +155,8 @@ def zero_shot_detection(source_image_paths, model, processor, topk, batch_size,v
             visualize_objectnesses_batch(image_batch, source_boxes, source_pixel_values, objectnesses, topk)
             
         if query_selection:
-            query_embeddings = []
-            indexes= []
             # Remove batch dimension for each image in the batch
-            for i in range(min(batch_size, len(source_boxes))): 
+            for i,image in enumerate(image_batch):
                 current_source_boxes = source_boxes[i].detach().numpy()
                 current_objectnesses = torch.sigmoid(objectnesses[i].detach()).numpy()
                 current_class_embedding = source_class_embedding[i].detach().numpy()
@@ -315,7 +316,7 @@ def one_shot_detection_batches(target_image_paths, model, processor, query_embed
                         'classes': final_classes
                     }
             batch_results.append(batch_query_results)
-
+            print(batch_query_results)
 
         all_batch_results.append(batch_results)
 
@@ -325,7 +326,7 @@ def one_shot_detection_batches(target_image_paths, model, processor, query_embed
 
 if __name__ == "__main__":
 
-    source_image_paths = 'query_images/'
+    source_image_paths = 'fewshot_query_images/'
     target_image_paths = 'test_images/'
 
     # Image-Conditioned Object Detection
@@ -334,14 +335,15 @@ if __name__ == "__main__":
 
     batch_size = 4
     top_objectness = 3
-    manual_query_selection = True
+    manual_query_selection = False
     threshold = 0.96
     visualize = True
 
     # Find the objects in the query images
     if manual_query_selection:
-        #zero_shot_detection(source_image_paths, model, processor, top_objectness, batch_size, visualize, query_selection=False)
-        indexes = [1523, 1700, 1465, 1344]
+        # zero_shot_detection(source_image_paths, model, processor, top_objectness, batch_size, visualize, query_selection=False)
+        # indexes = [1523, 1700, 1465, 1344]
+        indexes = [1523,1641,1750,1700,1700,747,1465,1704,1214,1344,876,2071]
         query_embeddings, classes = find_query_patches_batches(source_image_paths, model, processor, indexes, batch_size)
 
     else: 
