@@ -25,7 +25,7 @@ ID2CLASS = {
 
 CLASS2ID = {v: k for k,v in ID2CLASS.items()}
 
-def nms_tf(bboxes, scores, threshold):
+def nms_tf(bboxes, scores, classes, threshold):
     bboxes = tf.cast(bboxes,dtype=tf.float32)
     x_min,y_min,x_max,y_max = tf.unstack(bboxes,axis=1)
     bboxes = tf.stack([y_min,x_min,y_max,x_max],axis=1)
@@ -34,8 +34,9 @@ def nms_tf(bboxes, scores, threshold):
     scores = tf.gather(scores,bbox_indices)
     y_min,x_min,y_max,x_max = tf.unstack(filtered_bboxes,axis=1)
     filtered_bboxes = tf.stack([x_min,y_min,x_max,y_max],axis=1)
+    filtered_classes = np.array(classes)[bbox_indices.numpy()] 
     
-    return filtered_bboxes, scores   
+    return filtered_bboxes, scores, filtered_classes  
 
 def get_preprocessed_image(pixel_values):
     pixel_values = pixel_values.squeeze().numpy()
@@ -199,7 +200,7 @@ def find_query_patches_batches(source_image_paths, model, processor, indexes, ba
 
     return query_embeddings, classes
 
-def one_shot_detection_batches(target_image_paths, model, processor, query_embeddings, classes, threshold, batch_size, visualize, topk=None):
+def one_shot_detection_batches(target_image_paths, model, processor, query_embeddings, classes, threshold, batch_size, nms_interclass=False, visualize=True, topk=None):
 
     images = load_image_group(target_image_paths)
     all_batch_results = [] 
@@ -226,6 +227,9 @@ def one_shot_detection_batches(target_image_paths, model, processor, query_embed
             unnormalized_image = get_preprocessed_image(target_pixel_values[image_idx])
             class_wise_boxes = {cls: [] for cls in classes} # dictionary of lists
             class_wise_scores = {cls: [] for cls in classes}
+            all_boxes = []
+            all_scores = []
+            class_identifiers = []
 
             if visualize:
                 fig, ax = plt.subplots(1, 1, figsize=(8, 8))
@@ -250,27 +254,49 @@ def one_shot_detection_batches(target_image_paths, model, processor, query_embed
                     top_indices = np.where(scores > threshold)[0]
                     scores = scores[top_indices]
                     
-
-                # Accumulate boxes and scores for each class
-                class_wise_boxes[classes[idx]].extend(target_boxes_np[top_indices])
-                class_wise_scores[classes[idx]].extend(scores)
+                if not nms_interclass:
+                    # Accumulate boxes and scores for each class
+                    class_wise_boxes[classes[idx]].extend(target_boxes_np[top_indices])
+                    class_wise_scores[classes[idx]].extend(scores)
+                else:
+                    all_boxes.append(target_boxes_np[top_indices])
+                    all_scores.append(scores)
+                    class_identifiers.extend([classes[idx]] * len(top_indices))
 
             final_boxes = []
             final_scores = []
             final_classes = []
 
-            for cls in classes: 
-                if class_wise_boxes[cls]:
-                    # Apply NMS on the bounding boxes of the same class
-                    bboxes_tensor = tf.convert_to_tensor(class_wise_boxes[cls], dtype=tf.float32)
-                    pscores_tensor = tf.convert_to_tensor(class_wise_scores[cls], dtype=tf.float32)
-                    nms_boxes, nms_scores = nms_tf(bboxes_tensor, pscores_tensor, 0.3)
-                    nms_boxes = nms_boxes.numpy()
-                    nms_scores = nms_scores.numpy()
+            if nms_interclass== False:
+                for cls in classes: 
+                    if class_wise_boxes[cls]:
+                        # Apply NMS on the bounding boxes of the same class
+                        bboxes_tensor = tf.convert_to_tensor(class_wise_boxes[cls], dtype=tf.float32)
+                        pscores_tensor = tf.convert_to_tensor(class_wise_scores[cls], dtype=tf.float32)
+                        nms_boxes, nms_scores, _= nms_tf(bboxes_tensor, pscores_tensor, class_identifiers, 0.3)
+                        nms_boxes = nms_boxes.numpy()
+                        nms_scores = nms_scores.numpy()
 
-                    final_boxes.extend(nms_boxes)
-                    final_scores.extend(nms_scores)
-                    final_classes.extend([cls] * len(nms_boxes))
+                        final_boxes.extend(nms_boxes)
+                        final_scores.extend(nms_scores)
+                        final_classes.extend([cls] * len(nms_boxes))
+
+            else:
+                # Concatenate all boxes and scores for NMS
+                all_boxes = np.concatenate(all_boxes, axis=0)
+                all_scores = np.concatenate(all_scores, axis=0)
+
+                bboxes_tensor = tf.convert_to_tensor(all_boxes, dtype=tf.float32)
+                pscores_tensor = tf.convert_to_tensor(all_scores, dtype=tf.float32)
+
+                # nms_indices = tf.image.non_max_suppression(bboxes_tensor, pscores_tensor, max_output_size=100, iou_threshold=0.3)
+                nms_boxes, nms_scores, nms_classes = nms_tf(bboxes_tensor, pscores_tensor, class_identifiers, 0.3)
+                nms_boxes = nms_boxes.numpy()
+                nms_scores = nms_scores.numpy()
+
+                final_boxes.extend(nms_boxes)
+                final_scores.extend(nms_scores)
+                final_classes.extend(nms_classes)
 
             # Plot bounding boxes for each image
             if visualize:
@@ -335,9 +361,10 @@ if __name__ == "__main__":
 
     batch_size = 4
     top_objectness = 3
-    manual_query_selection = False
+    manual_query_selection = True
     threshold = 0.96
     visualize = True
+    nms_interclass = True
 
     # Find the objects in the query images
     if manual_query_selection:
@@ -352,7 +379,7 @@ if __name__ == "__main__":
     print(indexes, classes)
     
     # Detect query objects in test images
-    results = one_shot_detection_batches(target_image_paths,model,processor,query_embeddings, classes, threshold, batch_size, visualize)
+    results = one_shot_detection_batches(target_image_paths, model, processor, query_embeddings, classes, threshold, batch_size, nms_interclass, visualize)
     print(results)
 
     
