@@ -11,18 +11,22 @@ import matplotlib.pyplot as plt
 from scipy.special import expit as sigmoid
 import warnings
 import tensorflow as tf
-
+from datetime import datetime
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 from typing import Any, Literal, Optional, List, Tuple, Union
 from pprint import pformat
 from tensorboardX import SummaryWriter
 import torch.cuda.amp as amp
 import logging
-from logs.tglog import RequestsHandler, LogstashFormatter, TGFilter
+from RunOptions import RunOptions
+
+#from logs.tglog import RequestsHandler, LogstashFormatter, TGFilter
 
 PROJECT_BASE_PATH = os.path.abspath(
     "C:\\Users\\cm03009\\Documents\\OneShotObjectDetection"
 )
+
+'''
 tg_handler = RequestsHandler()
 formatter = LogstashFormatter()
 filter = TGFilter()
@@ -36,19 +40,50 @@ logging.basicConfig(
         tg_handler,
     ],
 )
+'''
+# Directory and file path
+log_dir = os.path.join(PROJECT_BASE_PATH, "logs")
+# Create a timestamp for the log file name
+timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+log_file = os.path.join(log_dir, f"debug_{timestamp}.log")
+
+# Create the directory if it doesn't exist
+os.makedirs(log_dir, exist_ok=True)
+
+# Setup logging configuration
+logging.basicConfig(
+    level=logging.INFO, 
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(log_file),
+        logging.StreamHandler()
+        ],
+    )
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
+
 
 
 # Colors for bounding boxes for different source queries
+'''
 colors = ["red", "green", "blue", "purple"]
 linestyles = ["-", "-", "--", "-"]
 ID2CLASS = {1: "apple", 2: "cat", 3: "dog", 4: "usb"}
+'''
+
+colors = ["red", "green", "blue"]
+linestyles = ["-", "-", "-"]
+ID2CLASS = {1: "squirrel", 2: "nail", 3: "pin"}
 
 CLASS2ID = {v: k for k, v in ID2CLASS.items()}
 
 
-def nms_tf(bboxes, scores, classes, threshold):
+def nms_tf(
+        bboxes: tf.Tensor,
+        scores: tf.Tensor, 
+        classes: List[str], 
+        threshold: float
+)-> Tuple[tf.Tensor, tf.Tensor, List[str]]:
+    logger.info("Applying NMS with threshold: %f on %d boxes", threshold, len(bboxes))
     bboxes = tf.cast(bboxes, dtype=tf.float32)
     x_min, y_min, x_max, y_max = tf.unstack(bboxes, axis=1)
     bboxes = tf.stack([y_min, x_min, y_max, x_max], axis=1)
@@ -60,11 +95,11 @@ def nms_tf(bboxes, scores, classes, threshold):
     y_min, x_min, y_max, x_max = tf.unstack(filtered_bboxes, axis=1)
     filtered_bboxes = tf.stack([x_min, y_min, x_max, y_max], axis=1)
     filtered_classes = np.array(classes)[bbox_indices.numpy()]
-
+    logger.info("NMS completed. Kept %d boxes.", len(filtered_bboxes))
     return filtered_bboxes, scores, filtered_classes
 
 
-def get_preprocessed_image(pixel_values):
+def get_preprocessed_image(pixel_values: torch.Tensor) -> Image.Image:
     pixel_values = pixel_values.squeeze().numpy()
     unnormalized_image = (
         pixel_values * np.array(OPENAI_CLIP_STD)[:, None, None]
@@ -75,33 +110,43 @@ def get_preprocessed_image(pixel_values):
     return unnormalized_image
 
 
-def load_image_group(image_dir):
+def load_image_group(image_dir: str) -> List[np.ndarray]:
+    logger.info("Loading images from directory: %s", image_dir)
     images = []
     for image_name in os.listdir(image_dir):
-        if image_name.endswith((".png", ".jpg", ".jpeg", ".bmp")):
+        if image_name.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
             image_path = os.path.join(image_dir, image_name)
             image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
             if image is not None:
                 images.append(image)
+    if images is not None:
+        logger.info("Loaded %d images.", len(images))
+    else:
+        logger.warning("Failed to load test image batch")
     return images
 
 
-def load_query_image_group(image_dir):
+def load_query_image_group(image_dir: str) -> List[Tuple[np.ndarray, str]]:
+    logger.info("Loading query images and categories from directory: %s", image_dir)
     images = []
     for image_name in os.listdir(image_dir):
-        if image_name.endswith((".png", ".jpg", ".jpeg", ".bmp")):
+        if image_name.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
             category = ID2CLASS[int(image_name.split("_")[0])]
             image_path = os.path.join(image_dir, image_name)
             image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
             if image is not None:
                 images.append((image, category))
+    if images is not None:
+        logger.info("Loaded %d query images.", len(images))
+    else:
+        logger.warning("Failed to load query images")
     return images
 
 
 def visualize_objectnesses_batch(
-    image_batch, source_boxes, source_pixel_values, objectnesses, topk
+    image_batch, source_boxes, source_pixel_values, objectnesses, topk, batch_index, writer = Optional[SummaryWriter]
 ):
-
+    logger.info("Visualizing the objectnesses for objects detected in query images")
     unnormalized_source_images = []
     for pixel_value in source_pixel_values:
         unnormalized_image = get_preprocessed_image(pixel_value)
@@ -113,7 +158,6 @@ def visualize_objectnesses_batch(
         ax.set_axis_off()
 
         # Get objectness scores and boxes for the current image
-
         current_objectnesses = torch.sigmoid(objectnesses[idx].detach()).numpy()
         current_boxes = source_boxes[idx].detach().numpy()
 
@@ -155,29 +199,27 @@ def visualize_objectnesses_batch(
         ax.set_xlim(0, 1)
         ax.set_ylim(1, 0)
         ax.set_title(f"Top {topk} objects by objectness")
-
-        plt.show()
-
+        # Add image with bounding boxes to the writer
+        writer.add_figure(f"Query_Images_with_boxes/image_{idx}_batch{batch_index}", fig, global_step= batch_index+idx+1)
+        writer.flush()
 
 def zero_shot_detection(
-    source_image_paths,
-    model,
-    processor,
-    topk,
-    batch_size,
-    visualize,
-    query_selection=False,
-):
+    model: Owlv2ForObjectDetection,
+    processor: Owlv2Processor,
+    args: "RunOptions",
+    writer: Optional[SummaryWriter] = None,
+)-> Union[Tuple[List[int], List[np.ndarray], List[str]], None]:
 
     source_class_embeddings = []
-    images, classes = zip(*load_query_image_group(source_image_paths))
+    images, classes = zip(*load_query_image_group(args.source_image_paths))
     images = list(images)
     classes = list(classes)
     query_embeddings = []
     indexes = []
 
-    for batch_start in range(0, len(images), batch_size):
-        image_batch = images[batch_start : batch_start + batch_size]
+    for batch_start in range(0, len(images), args.query_batch_size):
+        logger.info(f"Performing zero-shot detection on batch {batch_start // args.query_batch_size + 1} of the source images.")
+        image_batch = images[batch_start : batch_start + args.query_batch_size]
         source_pixel_values = processor(
             images=image_batch, return_tensors="pt"
         ).pixel_values
@@ -193,18 +235,17 @@ def zero_shot_detection(
         source_boxes = model.box_predictor(image_features, feature_map=feature_map)
         source_class_embedding = model.class_predictor(image_features)[1]
         source_class_embeddings.append(source_class_embedding)
-        if visualize:
+        batch_index = batch_start//batch_size+1
+        if args.visualize_query_images:
             visualize_objectnesses_batch(
-                image_batch, source_boxes, source_pixel_values, objectnesses, topk
+                image_batch, source_boxes, source_pixel_values, objectnesses, args.topk_query, batch_index, writer
             )
 
-        if query_selection:
+        if not args.manual_query_selection:
             # Remove batch dimension for each image in the batch
             for i, image in enumerate(image_batch):
-                current_source_boxes = source_boxes[i].detach().numpy()
                 current_objectnesses = torch.sigmoid(objectnesses[i].detach()).numpy()
                 current_class_embedding = source_class_embedding[i].detach().numpy()
-
                 # Extract the query embedding for the current image based on the given index
                 query_embedding = current_class_embedding[
                     np.argmax(current_objectnesses)
@@ -212,20 +253,30 @@ def zero_shot_detection(
                 indexes.append(np.argmax(current_objectnesses))
                 query_embeddings.append(query_embedding)
 
-    if query_selection:
+    if not args.manual_query_selection:
+        writer.add_text("indexes of query objects", str(indexes))
+        writer.add_text("classes of query objects", str(classes) )
+        logger.info("Finished extracting the query embeddings")
+        writer.flush()
         return indexes, query_embeddings, classes
 
+    logger.info("Zero-shot detection completed")
+    return None
 
-def find_query_patches_batches(
-    source_image_paths, model, processor, indexes, batch_size
+def find_query_patches_batches( 
+    model: Owlv2ForObjectDetection, 
+    processor: Owlv2Processor, 
+    args: "RunOptions",
+    indexes: List [int], 
+    writer: Optional["SummaryWriter"] = None
 ):
     query_embeddings = []
-    images, classes = zip(*load_query_image_group(source_image_paths))
+    images, classes = zip(*load_query_image_group(args.source_image_paths))
     images = list(images)
     classes = list(classes)
 
-    for batch_start in range(0, len(images), batch_size):
-        image_batch = images[batch_start : batch_start + batch_size]
+    for batch_start in range(0, len(images), args.query_batch_size):
+        image_batch = images[batch_start : batch_start + args.query_batch_size]
         source_pixel_values = processor(
             images=image_batch, return_tensors="pt"
         ).pixel_values
@@ -247,27 +298,30 @@ def find_query_patches_batches(
             query_embedding = current_class_embedding[indexes[batch_start + i]]
             query_embeddings.append(query_embedding)
 
+        writer.add_text("indexes of query objects", str(indexes))
+        writer.add_text("classes of query objects", str(classes))
+        writer.flush()
+        np.save("query_embeddings.npy", query_embeddings)
+        np.save("classes.npy", classes)
+
     return query_embeddings, classes
 
 
 def one_shot_detection_batches(
-    target_image_paths,
     model,
     processor,
     query_embeddings,
     classes,
-    threshold,
-    batch_size,
-    nms_interclass=False,
-    visualize=True,
-    topk=None,
+    args: "RunOptions",
+    writer: Optional["SummaryWriter"] = None    
 ):
 
-    images = load_image_group(target_image_paths)
+    images = load_image_group(args.target_image_paths)
     all_batch_results = []
-
-    for batch_start in range(0, len(images), batch_size):
-        image_batch = images[batch_start : batch_start + batch_size]
+    logger.info("Performing Prediction on test images")
+    for batch_start in range(0, len(images), args.test_batch_size):
+        logger.info(f"Processing bacth {batch_start // args.test_batch_size + 1}")
+        image_batch = images[batch_start : batch_start + args.test_batch_size]
         target_pixel_values = processor(
             images=image_batch, return_tensors="pt"
         ).pixel_values
@@ -294,7 +348,8 @@ def one_shot_detection_batches(
             all_scores = []
             class_identifiers = []
 
-            if visualize:
+            if args.visualize_test_images:
+                logger.info("Visualizing the images and predicted results")
                 fig, ax = plt.subplots(1, 1, figsize=(8, 8))
                 ax.imshow(unnormalized_image, extent=(0, 1, 1, 0))
                 ax.set_axis_off()
@@ -310,15 +365,15 @@ def one_shot_detection_batches(
                 target_boxes_np = target_boxes[image_idx].detach().numpy()
                 target_logits = target_class_predictions[image_idx].detach().numpy()
 
-                if topk is not None:
-                    top_indices = np.argsort(target_logits[:, 0])[-topk[idx] :]
+                if args.topk_test is not None:
+                    top_indices = np.argsort(target_logits[:, 0])[-args.topk_test[idx] :]
                     scores = sigmoid(target_logits[top_indices, 0])
                 else:
                     scores = sigmoid(target_logits[:, 0])
-                    top_indices = np.where(scores > threshold)[0]
+                    top_indices = np.where(scores > args.confidence_threshold)[0]
                     scores = scores[top_indices]
 
-                if not nms_interclass:
+                if not args.nms_between_classes:
                     # Accumulate boxes and scores for each class
                     class_wise_boxes[classes[idx]].extend(target_boxes_np[top_indices])
                     class_wise_scores[classes[idx]].extend(scores)
@@ -331,7 +386,7 @@ def one_shot_detection_batches(
             final_scores = []
             final_classes = []
 
-            if nms_interclass == False:
+            if not args.nms_between_classes:
                 for cls in classes:
                     if class_wise_boxes[cls]:
                         # Apply NMS on the bounding boxes of the same class
@@ -342,7 +397,7 @@ def one_shot_detection_batches(
                             class_wise_scores[cls], dtype=tf.float32
                         )
                         nms_boxes, nms_scores, _ = nms_tf(
-                            bboxes_tensor, pscores_tensor, class_identifiers, 0.3
+                            bboxes_tensor, pscores_tensor, class_identifiers, args.nms_threshold
                         )
                         nms_boxes = nms_boxes.numpy()
                         nms_scores = nms_scores.numpy()
@@ -361,7 +416,7 @@ def one_shot_detection_batches(
 
                 # nms_indices = tf.image.non_max_suppression(bboxes_tensor, pscores_tensor, max_output_size=100, iou_threshold=0.3)
                 nms_boxes, nms_scores, nms_classes = nms_tf(
-                    bboxes_tensor, pscores_tensor, class_identifiers, 0.3
+                    bboxes_tensor, pscores_tensor, class_identifiers, args.nms_threshold
                 )
                 nms_boxes = nms_boxes.numpy()
                 nms_scores = nms_scores.numpy()
@@ -371,7 +426,7 @@ def one_shot_detection_batches(
                 final_classes.extend(nms_classes)
 
             # Plot bounding boxes for each image
-            if visualize:
+            if args.visualize_test_images:
                 for i, (box, score, cls) in enumerate(
                     zip(final_boxes, final_scores, final_classes)
                 ):
@@ -405,16 +460,16 @@ def one_shot_detection_batches(
                         },
                     )
 
-            if visualize:
+            if args.visualize_test_images:
                 ax.set_xlim(0, 1)
                 ax.set_ylim(1, 0)
                 ax.set_title(
-                    f"One-Shot Object Detection (Batch {batch_start // batch_size + 1}, Image {image_idx + 1})"
+                    f"One-Shot Object Detection (Batch {batch_start // args.test_batch_size + 1}, Image {image_idx + 1})"
                 )
-                plt.show()
+                writer.add_figure(f"Test_Image_with_prediction_boxes/image_{image_idx}_batch_{batch_start//args.test_batch_size +1}", fig, global_step=image_idx + batch_start//args.test_batch_size +1)
 
             batch_query_results = {
-                "batch_index": batch_start // batch_size + 1,
+                "batch_index": batch_start // args.test_batch_size + 1,
                 "image_idx": image_idx + batch_start,
                 "boxes": final_boxes,
                 "scores": final_scores,
@@ -425,60 +480,48 @@ def one_shot_detection_batches(
 
         all_batch_results.append(batch_results)
 
+    writer.flush()
+    logger.info(f"Finished prediction of all images, the results are: \n {pformat(all_batch_results, indent=2, underscore_numbers=True)}")
+
     return all_batch_results
 
 
 if __name__ == "__main__":
 
-    source_image_paths = "fewshot_query_images/"
-    target_image_paths = "test_images/"
+    
+    options = RunOptions()
+    print(options.__dict__)
 
     # Image-Conditioned Object Detection
-    processor = Owlv2Processor.from_pretrained("google/owlv2-base-patch16-ensemble")
-    model = Owlv2ForObjectDetection.from_pretrained(
-        "google/owlv2-base-patch16-ensemble"
-    )
-
-    batch_size = 4
-    top_objectness = 3
-    manual_query_selection = True
-    threshold = 0.96
-    visualize = True
-    nms_interclass = True
+    writer = SummaryWriter(comment=options.comment)
+    model = options.model.from_pretrained(options.backbone)
+    processor = options.processor.from_pretrained(options.backbone)
 
     # Find the objects in the query images
-    if manual_query_selection:
-        # zero_shot_detection(source_image_paths, model, processor, top_objectness, batch_size, visualize, query_selection=False)
-        # indexes = [1523, 1700, 1465, 1344]
+    if options.manual_query_selection:
+        zero_shot_detection(model, processor, options, writer)
+        #indexes = [1523, 1700, 1465, 1344]
         indexes = [1523, 1641, 1750, 1700, 1700, 747, 1465, 1704, 1214, 1344, 876, 2071]
         query_embeddings, classes = find_query_patches_batches(
-            source_image_paths, model, processor, indexes, batch_size
+            model, processor, options, indexes, writer
         )
 
     else:
         indexes, query_embeddings, classes = zero_shot_detection(
-            source_image_paths,
             model,
             processor,
-            top_objectness,
-            batch_size,
-            visualize,
-            query_selection=True,
+            options,
+            writer
         )
-
-    print(indexes, classes)
 
     # Detect query objects in test images
     results = one_shot_detection_batches(
-        target_image_paths,
         model,
         processor,
         query_embeddings,
         classes,
-        threshold,
-        batch_size,
-        nms_interclass,
-        visualize,
+        options,
+        writer
     )
 
-    print(results)
+    
