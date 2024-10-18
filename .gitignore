@@ -1,2 +1,6 @@
 logs/
 runs/
+coco-2017/
+ImageNet_query/
+ImageNet_query_fewshot/
+ImageNet_test/
