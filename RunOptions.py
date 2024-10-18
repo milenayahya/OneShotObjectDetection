@@ -7,9 +7,9 @@ from torch.utils.tensorboard import SummaryWriter
 class RunOptions:
     def __init__(self, 
                  backbone: str = "google/owlv2-base-patch16-ensemble",
-                 source_image_paths: str = "ImageNet_query/",
+                 source_image_paths: str = "ImageNet_query_fewshot/",
                  target_image_paths: str = "ImageNet_test/",
-                 comment: str = "one_shot",
+                 comment: str = "_3shot_on_ImageNet",
                  query_batch_size: int = 4,
                  test_batch_size: int = 4,
                  topk_query: int = 3,
