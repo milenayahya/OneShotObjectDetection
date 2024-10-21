@@ -1,0 +1,18 @@
+torch==2.5.0
+torchvision==0.20.0
+torchaudio==2.5.0
+fiftyone==1.0.1
+fiftyone_brain==0.17.0
+fiftyone_db==1.1.7
+matplotlib==3.9.2
+numpy==1.26.0  # Compatible with Python 3.12
+opencv_python==4.10.0.84
+opencv_python_headless==4.10.0.84
+Pillow==11.0.0
+pycocotools==2.0.8
+requests==2.32.3
+scipy==1.14.1
+tensorboardX==2.6.2.2
+tensorflow==2.17.0
+tensorflow_intel==2.17.0
+transformers==4.45.0

@@ -12,8 +12,8 @@ if __name__=="__main__":
         source_image_paths="coco_query_objects",
         target_image_paths="coco-2017/validation/data", 
         comment="coco_0shot", 
-        query_batch_size=16, 
-        test_batch_size=32, 
+        query_batch_size=8, 
+        test_batch_size=8, 
         k_shot=1,
         visualize_test_images=False,
         nms_threshold=0.5
@@ -41,8 +41,11 @@ if __name__=="__main__":
         writer
     )
 
-    with open("results.json", "w") as f:
+    with open("results_cocoFormat.json", "w") as f:
         json.dump(coco_results,f)
+
+    with open("results.json", "w") as f:
+        json.dump(results,f)
 
 
 
