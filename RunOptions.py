@@ -14,6 +14,7 @@ class RunOptions:
                  test_batch_size: int = 4,
                  topk_query: int = 3,
                  topk_test: int = None,
+                 k_shot = None,
                  manual_query_selection: bool = False,
                  confidence_threshold: float = 0.96,
                  visualize_query_images: bool = True,
@@ -30,6 +31,7 @@ class RunOptions:
         self.test_batch_size = test_batch_size
         self.topk_query = topk_query
         self.topk_test = topk_test
+        self.k_shot = k_shot
         self.manual_query_selection = manual_query_selection
         self.confidence_threshold = confidence_threshold
         self.visualize_query_images = visualize_query_images
@@ -51,6 +53,7 @@ class RunOptions:
             test_batch_size=args.test_batch_size,
             topk_query=args.topk_query,
             topk_test=args.topk_test,
+            k_shot = None,
             manual_query_selection=args.manual_query_selection,
             confidence_threshold=args.confidence_threshold,
             visualize_query_images=args.visualize_query_images,
@@ -76,7 +79,9 @@ def parse_args():
     parser.add_argument("--topk_query", type=int, default=3,
                         help="Top k objectnesses in query images.")  
     parser.add_argument("--topk_test", type=int, default=3,
-                        help="Top k predictions kept in test images.")                   
+                        help="Top k predictions kept in test images.")  
+    parser.add_argument("--k_shot", type=int, default=3,
+                        help="K-Shot Object Detection")                   
     parser.add_argument("--manual_query_selection", action="store_true",
                         help="Manually select query images.")
     parser.add_argument("--confidence_threshold", type=float, default=0.96,

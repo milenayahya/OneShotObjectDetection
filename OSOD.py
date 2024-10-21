@@ -1,11 +1,12 @@
 from transformers import Owlv2Processor, Owlv2ForObjectDetection
 import requests
+import random
 from PIL import Image, ImageDraw
 import torch
 import numpy as np
 import os
-import cv2  # type: ignore
-from transformers.utils.constants import OPENAI_CLIP_MEAN, OPENAI_CLIP_STD  # type: ignore
+import cv2 
+from transformers.utils.constants import OPENAI_CLIP_MEAN, OPENAI_CLIP_STD  
 from matplotlib import rcParams
 import matplotlib.pyplot as plt
 from scipy.special import expit as sigmoid
@@ -19,12 +20,10 @@ from tensorboardX import SummaryWriter
 import torch.cuda.amp as amp
 import logging
 from RunOptions import RunOptions
-
+from coco_perprocess import ID2CLASS, CLASS2ID, ID2COLOR
+from config import PROJECT_BASE_PATH
 #from logs.tglog import RequestsHandler, LogstashFormatter, TGFilter
 
-PROJECT_BASE_PATH = os.path.abspath(
-    "C:\\Users\\cm03009\\Documents\\OneShotObjectDetection"
-)
 
 '''
 tg_handler = RequestsHandler()
@@ -68,13 +67,14 @@ logger = logging.getLogger(__name__)
 colors = ["red", "green", "blue", "purple"]
 linestyles = ["-", "-", "--", "-"]
 ID2CLASS = {1: "apple", 2: "cat", 3: "dog", 4: "usb"}
-'''
+CLASS2ID = {v: k for k, v in ID2CLASS.items()}
 
 colors = ["red", "green", "blue"]
 linestyles = ["-", "-", "-"]
 ID2CLASS = {1: "squirrel", 2: "nail", 3: "pin"}
 
 CLASS2ID = {v: k for k, v in ID2CLASS.items()}
+'''
 
 
 def nms_tf(
@@ -98,7 +98,6 @@ def nms_tf(
     logger.info("NMS completed. Kept %d boxes.", len(filtered_bboxes))
     return filtered_bboxes, scores, filtered_classes
 
-
 def get_preprocessed_image(pixel_values: torch.Tensor) -> Image.Image:
     pixel_values = pixel_values.squeeze().numpy()
     unnormalized_image = (
@@ -108,7 +107,6 @@ def get_preprocessed_image(pixel_values: torch.Tensor) -> Image.Image:
     unnormalized_image = np.moveaxis(unnormalized_image, 0, -1)
     unnormalized_image = Image.fromarray(unnormalized_image)
     return unnormalized_image
-
 
 def load_image_group(image_dir: str) -> List[np.ndarray]:
     logger.info("Loading images from directory: %s", image_dir)
@@ -125,13 +123,18 @@ def load_image_group(image_dir: str) -> List[np.ndarray]:
         logger.warning("Failed to load test image batch")
     return images
 
-
-def load_query_image_group(image_dir: str) -> List[Tuple[np.ndarray, str]]:
+def load_query_image_group(image_dir: str, k=None) -> List[Tuple[np.ndarray, str]]:
     logger.info("Loading query images and categories from directory: %s", image_dir)
     images = []
     for image_name in os.listdir(image_dir):
         if image_name.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
             category = ID2CLASS[int(image_name.split("_")[0])]
+
+            #Taking only k query images to perfrom k shot detection
+            k_hat = image_name.split("_")[-1].split(".")[0]
+            if k is not None and int(k_hat) > k:         
+                continue
+
             image_path = os.path.join(image_dir, image_name)
             image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
             if image is not None:
@@ -141,7 +144,6 @@ def load_query_image_group(image_dir: str) -> List[Tuple[np.ndarray, str]]:
     else:
         logger.warning("Failed to load query images")
     return images
-
 
 def visualize_objectnesses_batch(
     image_batch, source_boxes, source_pixel_values, objectnesses, topk, batch_index, writer = Optional[SummaryWriter]
@@ -211,24 +213,30 @@ def zero_shot_detection(
 )-> Union[Tuple[List[int], List[np.ndarray], List[str]], None]:
 
     source_class_embeddings = []
-    images, classes = zip(*load_query_image_group(args.source_image_paths))
+    images, classes = zip(*load_query_image_group(args.source_image_paths, args.k_shot))
     images = list(images)
     classes = list(classes)
     query_embeddings = []
     indexes = []
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    print(f"Using device: {device}")
+
 
     for batch_start in range(0, len(images), args.query_batch_size):
         logger.info(f"Performing zero-shot detection on batch {batch_start // args.query_batch_size + 1} of the source images.")
         image_batch = images[batch_start : batch_start + args.query_batch_size]
         source_pixel_values = processor(
             images=image_batch, return_tensors="pt"
-        ).pixel_values
+        ).pixel_values.to(device)
         with torch.no_grad():
             feature_map = model.image_embedder(source_pixel_values)[0]
 
         # Rearrange feature map
         batch_size, height, width, hidden_size = feature_map.shape
-        image_features = feature_map.reshape(batch_size, height * width, hidden_size)
+        image_features = feature_map.reshape(batch_size, height * width, hidden_size).to(device)
+        logger.info(f"Model and tensors are on: {next(model.parameters()).device}")
 
         # Get objectness logits and boxes
         objectnesses = model.objectness_predictor(image_features)
@@ -238,14 +246,14 @@ def zero_shot_detection(
         batch_index = batch_start//batch_size+1
         if args.visualize_query_images:
             visualize_objectnesses_batch(
-                image_batch, source_boxes, source_pixel_values, objectnesses, args.topk_query, batch_index, writer
+                image_batch, source_boxes.cpu(), source_pixel_values.cpu(), objectnesses.cpu(), args.topk_query, batch_index, writer
             )
 
         if not args.manual_query_selection:
             # Remove batch dimension for each image in the batch
             for i, image in enumerate(image_batch):
-                current_objectnesses = torch.sigmoid(objectnesses[i].detach()).numpy()
-                current_class_embedding = source_class_embedding[i].detach().numpy()
+                current_objectnesses = torch.sigmoid(objectnesses[i].detach()).to(device).numpy()
+                current_class_embedding = source_class_embedding[i].detach().to(device).numpy()
                 # Extract the query embedding for the current image based on the given index
                 query_embedding = current_class_embedding[
                     np.argmax(current_objectnesses)
@@ -275,17 +283,21 @@ def find_query_patches_batches(
     images = list(images)
     classes = list(classes)
 
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    print(f"Using device: {device}")
+
     for batch_start in range(0, len(images), args.query_batch_size):
         image_batch = images[batch_start : batch_start + args.query_batch_size]
         source_pixel_values = processor(
             images=image_batch, return_tensors="pt"
-        ).pixel_values
+        ).pixel_values.to(device)
         with torch.no_grad():
             feature_map = model.image_embedder(source_pixel_values)[0]
 
         # Rearrange feature map
         batch_size, height, width, hidden_size = feature_map.shape
-        image_features = feature_map.reshape(batch_size, height * width, hidden_size)
+        image_features = feature_map.reshape(batch_size, height * width, hidden_size).to(device)
         source_boxes = model.box_predictor(image_features, feature_map=feature_map)
         source_class_embedding = model.class_predictor(image_features)[1]
 
@@ -306,7 +318,6 @@ def find_query_patches_batches(
 
     return query_embeddings, classes
 
-
 def one_shot_detection_batches(
     model,
     processor,
@@ -315,16 +326,22 @@ def one_shot_detection_batches(
     args: "RunOptions",
     writer: Optional["SummaryWriter"] = None    
 ):
+    # Move the model to GPU if available
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
 
     images = load_image_group(args.target_image_paths)
     all_batch_results = []
+    coco_results = []
+    random_visualize = random.random() <= 0.2
+
     logger.info("Performing Prediction on test images")
     for batch_start in range(0, len(images), args.test_batch_size):
         logger.info(f"Processing bacth {batch_start // args.test_batch_size + 1}")
         image_batch = images[batch_start : batch_start + args.test_batch_size]
         target_pixel_values = processor(
             images=image_batch, return_tensors="pt"
-        ).pixel_values
+        ).pixel_values.to(device)
 
         with torch.no_grad():
             feature_map = model.image_embedder(target_pixel_values)[0]
@@ -341,14 +358,14 @@ def one_shot_detection_batches(
 
         # Process each image in the batch
         for image_idx in range(b):
-            unnormalized_image = get_preprocessed_image(target_pixel_values[image_idx])
+            unnormalized_image = get_preprocessed_image(target_pixel_values[image_idx].cpu())
             class_wise_boxes = {cls: [] for cls in classes}  # dictionary of lists
             class_wise_scores = {cls: [] for cls in classes}
             all_boxes = []
             all_scores = []
             class_identifiers = []
 
-            if args.visualize_test_images:
+            if args.visualize_test_images or random_visualize:
                 logger.info("Visualizing the images and predicted results")
                 fig, ax = plt.subplots(1, 1, figsize=(8, 8))
                 ax.imshow(unnormalized_image, extent=(0, 1, 1, 0))
@@ -357,7 +374,7 @@ def one_shot_detection_batches(
             for idx, query_embedding in enumerate(query_embeddings):
                 query_embedding_tensor = torch.tensor(
                     query_embedding[None, None, ...], dtype=torch.float32
-                )
+                ).to(device)
 
                 target_class_predictions = model.class_predictor(
                     reshaped_feature_map, query_embedding_tensor
@@ -426,21 +443,31 @@ def one_shot_detection_batches(
                 final_classes.extend(nms_classes)
 
             # Plot bounding boxes for each image
-            if args.visualize_test_images:
+            if args.visualize_test_images or random_visualize:
                 for i, (box, score, cls) in enumerate(
                     zip(final_boxes, final_scores, final_classes)
                 ):
                     cx, cy, w, h = box
+                    
+                    coco_results.append({
+                        "image_id": image_idx + batch_start,
+                        "category_id": CLASS2ID[cls],
+                        "bbox": [box[0], box[1], box[2], box[3]],  # [x, y, width, height]
+                        "score": float(score)
+                    })
 
                     # Plot the bounding box with the respective color
                     ax.plot(
                         [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
                         [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
-                        color=colors[
-                            CLASS2ID[cls] - 1
+                        color=ID2COLOR[
+                            CLASS2ID[cls] 
                         ],  # Use a different color for each query
+                        #color=colors[
+                         #   CLASS2ID[cls] - 1
+                        #], 
                         alpha=0.5,
-                        linestyle=linestyles[CLASS2ID[cls] - 1],
+                        linestyle="-"
                     )
 
                     # Add text for the score
@@ -453,14 +480,17 @@ def one_shot_detection_batches(
                         color="black",
                         bbox={
                             "facecolor": "white",
-                            "edgecolor": colors[
-                                CLASS2ID[cls] - 1
+                            "edgecolor": ID2COLOR[
+                                CLASS2ID[cls]
                             ],  # Use respective color
+                            #"edgecolor": colors[
+                            #    CLASS2ID[cls] - 1
+                            #],  # Use respective color
                             "boxstyle": "square,pad=.3",
                         },
                     )
 
-            if args.visualize_test_images:
+            if args.visualize_test_images or random_visualize:
                 ax.set_xlim(0, 1)
                 ax.set_ylim(1, 0)
                 ax.set_title(
@@ -483,20 +513,35 @@ def one_shot_detection_batches(
     writer.flush()
     logger.info(f"Finished prediction of all images, the results are: \n {pformat(all_batch_results, indent=2, underscore_numbers=True)}")
 
-    return all_batch_results
+    return all_batch_results, coco_results
 
 
 if __name__ == "__main__":
 
-    
-    options = RunOptions()
+
+    options = RunOptions(
+        source_image_paths="fewshot_query_images",
+        target_image_paths="test_images", 
+        comment="test_GPU", 
+        query_batch_size=4, 
+        test_batch_size=16, 
+        visualize_test_images=True,
+        nms_threshold=0.5
+    )
     print(options.__dict__)
 
     # Image-Conditioned Object Detection
     writer = SummaryWriter(comment=options.comment)
     model = options.model.from_pretrained(options.backbone)
     processor = options.processor.from_pretrained(options.backbone)
+    
+    print(torch.cuda.is_available())
+    print(torch.cuda.device_count())
+    print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
 
+    print("Num GPUs Available: ", len(tf.config.experimental.list_physical_devices('GPU')))
+
+    '''
     # Find the objects in the query images
     if options.manual_query_selection:
         zero_shot_detection(model, processor, options, writer)
@@ -515,7 +560,7 @@ if __name__ == "__main__":
         )
 
     # Detect query objects in test images
-    results = one_shot_detection_batches(
+    results, coco_results = one_shot_detection_batches(
         model,
         processor,
         query_embeddings,
@@ -524,4 +569,4 @@ if __name__ == "__main__":
         writer
     )
 
-    
+    '''

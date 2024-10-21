@@ -4,3 +4,8 @@ coco-2017/
 ImageNet_query/
 ImageNet_query_fewshot/
 ImageNet_test/
+fewshot_query_images/
+coco_query_objects/
+query_images/
+test_images/
+myenv/
