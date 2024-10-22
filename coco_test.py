@@ -9,7 +9,7 @@ import json
 if __name__=="__main__":
 
     options = RunOptions(
-        source_image_paths="coco_query_objects",
+        source_image_paths="coco_query_objects_filtered",
         target_image_paths="coco-2017/validation/data", 
         comment="coco_0shot", 
         query_batch_size=8, 
@@ -41,7 +41,7 @@ if __name__=="__main__":
         writer
     )
 
-    with open("results_cocoFormat.json", "w") as f:
+    with open("results_cocoFormat_1shot.json", "w") as f:
         json.dump(coco_results,f)
 
     with open("results.json", "w") as f:

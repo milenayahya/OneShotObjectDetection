@@ -9,3 +9,4 @@ coco_query_objects/
 query_images/
 test_images/
 testenv/
+coco_query_objects_filtered/

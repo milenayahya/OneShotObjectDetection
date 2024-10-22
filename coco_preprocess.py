@@ -1,8 +1,8 @@
-from pycocotools import coco
+from pycocotools.coco import COCO
 import fiftyone as fo
 import fiftyone.zoo as foz
 import cv2
-from PIL import Image
+from PIL import Image 
 import os
 from config import PROJECT_BASE_PATH
 
@@ -273,7 +273,7 @@ ID2COLOR = {
 }
 
 
-def coco_to_left_upper_right_lower(coco_bbox, image_width, image_height):
+def coco_to_left_upper_right_lower(coco_bbox, image_width=None, image_height=None):
     """
     Convert a COCO bounding box from normalized format to (left, upper, right, lower) format.
 
@@ -285,12 +285,15 @@ def coco_to_left_upper_right_lower(coco_bbox, image_width, image_height):
     Returns:
     - A tuple (left, upper, right, lower) in pixel coordinates.
     """
-    # Convert normalized coordinates to pixel coordinates
-    x = coco_bbox[0] * image_width
-    y = coco_bbox[1] * image_height
-    width = coco_bbox[2] * image_width
-    height = coco_bbox[3] * image_height
 
+    if image_height or image_width is not None:
+    # Convert normalized coordinates to pixel coordinates
+        x = coco_bbox[0] * image_width
+        y = coco_bbox[1] * image_height
+        width = coco_bbox[2] * image_width
+        height = coco_bbox[3] * image_height
+    else:
+        x, y, width, height = coco_bbox 
     # Calculate left, upper, right, and lower
     left = int(x)
     upper = int(y)
@@ -299,7 +302,32 @@ def coco_to_left_upper_right_lower(coco_bbox, image_width, image_height):
 
     return (left, upper, right, lower)
 
-def get_coco_queries(dir, nb_samples):
+def crop_image(dir, image_path, ann, cat, i):
+    image = Image.open(image_path)
+    filename = os.path.join(dir, f"{CLASS2ID[cat['name']]}_{cat['name']}_{i+1}.JPEG")
+    cropped_im = image.crop(coco_to_left_upper_right_lower(ann['bbox']))
+    print(cropped_im.format)
+    cropped_im.save(filename)
+    image.close()
+
+def coco_create_queries(labels_file, image_dir, min_size, num_objects_per_class):
+    coco = COCO(labels_file)
+    cats = coco.loadCats(coco.getCatIds())
+
+    dir = os.path.join(PROJECT_BASE_PATH, "coco_query_objects_filtered")
+    os.makedirs(dir, exist_ok=True)
+
+    for cat in cats:
+        ann_ids = coco.getAnnIds(catIds=[cat['id']], areaRng=[min_size, float('inf')])
+        anns = coco.loadAnns(ann_ids)
+        for i, ann in enumerate(anns):
+            image_info = coco.loadImgs(ann['image_id'])[0]
+            image_path = os.path.join(dir, image_dir, image_info['file_name'])
+            crop_image(dir, image_path, ann, cat, i)
+            if i == num_objects_per_class - 1:
+                break
+
+def load_coco_train(dir, nb_samples):
 
     # Set the directory where datasets will be downloaded
     fo.config.dataset_zoo_dir = dir
@@ -317,7 +345,8 @@ def get_coco_queries(dir, nb_samples):
 
     session = fo.launch_app(dataset_query)
 
-    class_occurences = [0]*(nb_classes+1)
+    
+    class_occurences = [0]*(80+1)
 
     dir = os.path.join(PROJECT_BASE_PATH, "coco_query_objects")
     os.makedirs(dir, exist_ok=True)
@@ -337,10 +366,10 @@ def get_coco_queries(dir, nb_samples):
             filename = os.path.join(dir, f"{id}_{label}_{class_occurences[id]}.JPEG")
             cropped_image = image.crop(coco_to_left_upper_right_lower(bounding_box,width,height))
             cropped_image.save(filename)
-
+    
     session.wait()
 
-def load_coco_images(dir, split):
+def load_coco_test_val(dir, split):
    # Set the directory where datasets will be downloaded
     fo.config.dataset_zoo_dir = dir
 
@@ -361,8 +390,16 @@ if __name__ == "__main__":
         
     # Set the directory where datasets will be downloaded
     dir = "C:\\Users\\cm03009\\Documents\\OneShotObjectDetection"
-    nb_classes= 80
+    image_dir = "C:\\Users\\cm03009\\Documents\\OneShotObjectDetection\\coco-2017\\train\\data"
+    labels_file = "C:\\Users\\cm03009\\Documents\\OneShotObjectDetection\\coco-2017\\train\\labels.json"
+    nb_samples= 1000
     split = "test" #"validation" #"train"
+    k = 5
+    min_size = 5000
 
-    get_coco_queries(dir, nb_classes)
-    #load_coco_images(dir, split)
+    #load_coco_train(dir, nb_samples)
+    #load_coco_test_val(dir, split)
+
+    coco_create_queries(labels_file, image_dir, min_size, k)
+    
+    
