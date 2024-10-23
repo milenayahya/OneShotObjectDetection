@@ -10,3 +10,4 @@ query_images/
 test_images/
 testenv/
 coco_query_objects_filtered/
+results_cocoFormat.json
