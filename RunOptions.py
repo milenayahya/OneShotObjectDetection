@@ -6,6 +6,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 class RunOptions:
     def __init__(self, 
+                 model = Owlv2ForObjectDetection,
+                 processor = Owlv2Processor,
                  backbone: str = "google/owlv2-base-patch16-ensemble",
                  source_image_paths: str = "ImageNet_query_fewshot/",
                  target_image_paths: str = "ImageNet_test/",
@@ -21,8 +23,8 @@ class RunOptions:
                  visualize_test_images: bool = True,
                  nms_between_classes: bool = True,
                  nms_threshold: float = 0.3):
-        self.model = Owlv2ForObjectDetection  
-        self.processor = Owlv2Processor 
+        self.model = model  
+        self.processor = processor 
         self.backbone = backbone
         self.source_image_paths = source_image_paths
         self.target_image_paths = target_image_paths

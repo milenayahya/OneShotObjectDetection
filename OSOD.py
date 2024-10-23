@@ -146,7 +146,7 @@ def load_query_image_group(image_dir: str, k=None) -> List[Tuple[np.ndarray, str
     return images
 
 def visualize_objectnesses_batch(
-    image_batch, source_boxes, source_pixel_values, objectnesses, topk, batch_index, classes, writer = Optional[SummaryWriter]
+    image_batch, source_boxes, source_pixel_values, objectnesses, topk, batch_start, batch_size, classes, writer = Optional[SummaryWriter]
 ):
     unnormalized_source_images = []
     for pixel_value in source_pixel_values:
@@ -157,7 +157,10 @@ def visualize_objectnesses_batch(
         fig, ax = plt.subplots(1, 1, figsize=(8, 8))
         ax.imshow(unnormalized_source_images[idx], extent=(0, 1, 1, 0))
         ax.set_axis_off()
-        category = classes[batch_index+idx]
+
+        image_idx = batch_start + idx 
+        category = classes[image_idx]
+
         # Get objectness scores and boxes for the current image
         current_objectnesses = torch.sigmoid(objectnesses[idx].detach()).numpy()
         current_boxes = source_boxes[idx].detach().numpy()
@@ -201,7 +204,7 @@ def visualize_objectnesses_batch(
         ax.set_ylim(1, 0)
         ax.set_title(f"Zero-Shot on {category}: Top {topk} objects by objectness,")
         # Add image with bounding boxes to the writer
-        writer.add_figure(f"Query_Images_with_boxes/image_{idx}_batch{batch_index}", fig, global_step= batch_index+idx+1)
+        writer.add_figure(f"Query_Images_with_boxes/image_{idx}_batch{batch_start//batch_size}", fig, global_step= batch_start+idx+1)
         writer.flush()
 
 def zero_shot_detection(
@@ -245,10 +248,10 @@ def zero_shot_detection(
             source_boxes = model.box_predictor(image_features, feature_map=feature_map)
             source_class_embedding = model.class_predictor(image_features)[1]
             source_class_embeddings.append(source_class_embedding)
-            batch_index = batch_start//batch_size+1
+           
             if args.visualize_query_images:
                 visualize_objectnesses_batch(
-                    image_batch, source_boxes.cpu(), source_pixel_values.cpu(), objectnesses.cpu(), args.topk_query, batch_index, classes, writer
+                    image_batch, source_boxes.cpu(), source_pixel_values.cpu(), objectnesses.cpu(), args.topk_query, batch_start, args.query_batch_size, classes, writer
                 )
 
             if not args.manual_query_selection:
@@ -333,6 +336,7 @@ def one_shot_detection_batches(
     # Move the model to GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
+    print(f"Using device: {device}")
 
     images = load_image_group(args.target_image_paths)
     all_batch_results = []
@@ -531,8 +535,8 @@ if __name__ == "__main__":
     options = RunOptions(
         source_image_paths="fewshot_query_images",
         target_image_paths="test_images", 
-        comment="test_GPU", 
-        query_batch_size=4, 
+        comment="test_visualization", 
+        query_batch_size=2, 
         test_batch_size=16, 
         visualize_test_images=True,
         nms_threshold=0.5
@@ -565,6 +569,7 @@ if __name__ == "__main__":
             writer
         )
 
+    '''
     # Detect query objects in test images
     results, coco_results = one_shot_detection_batches(
         model,
@@ -574,3 +579,4 @@ if __name__ == "__main__":
         options,
         writer
     )
+    '''
