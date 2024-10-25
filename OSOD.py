@@ -22,8 +22,11 @@ import torch.cuda.amp as amp
 import logging
 from tqdm import tqdm
 from RunOptions import RunOptions
-from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+#from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
 from config import PROJECT_BASE_PATH
+from safetensors.torch import save_file
+from safetensors import safe_open
+from torchvision.ops import batched_nms
 #from logs.tglog import RequestsHandler, LogstashFormatter, TGFilter
 
 
@@ -65,12 +68,18 @@ logger = logging.getLogger(__name__)
 
 
 # Colors for bounding boxes for different source queries
-'''
-colors = ["red", "green", "blue", "purple"]
+
+ID2COLOR = {
+    1: "red",
+    2: "green",
+    3: "blue",
+    4: "purple"
+}
 linestyles = ["-", "-", "--", "-"]
 ID2CLASS = {1: "apple", 2: "cat", 3: "dog", 4: "usb"}
 CLASS2ID = {v: k for k, v in ID2CLASS.items()}
 
+'''
 colors = ["red", "green", "blue"]
 linestyles = ["-", "-", "-"]
 ID2CLASS = {1: "squirrel", 2: "nail", 3: "pin"}
@@ -99,6 +108,15 @@ def nms_tf(
     filtered_classes = np.array(classes)[bbox_indices.numpy()]
     #logger.info("NMS completed. Kept %d boxes.", len(filtered_bboxes))
     return filtered_bboxes, scores, filtered_classes
+
+import tensorflow as tf
+
+def nms_batched(boxes, scores, classes, threshold):
+    indices = batched_nms(boxes, scores, classes, threshold)
+    filtered_boxes = boxes[indices]
+    filtered_scores = scores[indices]
+    filtered_classes = classes[indices]
+    return filtered_boxes, filtered_scores, filtered_classes
 
 def get_preprocessed_image(pixel_values: torch.Tensor) -> Image.Image:
     pixel_values = pixel_values.squeeze().cpu().numpy()
@@ -219,6 +237,7 @@ def zero_shot_detection(
     images, classes = zip(*load_query_image_group(args.source_image_paths, args.k_shot))
     images = list(images)
     classes = list(classes)
+    classes = [CLASS2ID[class_name] for class_name in classes]
     query_embeddings = []
     indexes = []
 
@@ -338,7 +357,7 @@ def find_query_patches_batches(
 
     return query_embeddings, classes
 
-def one_shot_detection_batches(
+def one_shot_detection(
     model,
     processor,
     query_embeddings,
@@ -350,7 +369,7 @@ def one_shot_detection_batches(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     print(f"Using device: {device}")
-
+    print(classes)
     images = load_image_group(args.target_image_paths)
     all_batch_results = []
     coco_results = []
@@ -373,13 +392,13 @@ def one_shot_detection_batches(
         with torch.no_grad():
             feature_map = model.image_embedder(target_pixel_values)[0]
 
-        b, h, w, d = map(int, feature_map.shape)
-        target_boxes = model.box_predictor(
-            feature_map.reshape(b, h * w, d), feature_map=feature_map
-        )
-        # Contains the predicted boxes for each image in the batch.
-        # It is a list of lists
-        reshaped_feature_map = feature_map.view(b, h * w, d)
+            b, h, w, d = map(int, feature_map.shape)
+            target_boxes = model.box_predictor(
+                feature_map.reshape(b, h * w, d), feature_map=feature_map
+            )
+            # Contains the predicted boxes for each image in the batch.
+            # It is a list of lists
+            reshaped_feature_map = feature_map.view(b, h * w, d)
 
         batch_results = []
 
@@ -483,8 +502,6 @@ def one_shot_detection_batches(
                     zip(final_boxes, final_scores, final_classes)
                 ):
                     cx, cy, w, h = box
-                    
-                    print(type(box), box)
 
                     coco_results.append({
                         "image_id": image_idx + batch_start,
@@ -535,9 +552,7 @@ def one_shot_detection_batches(
                     f"One-Shot Object Detection (Batch {batch_start // args.test_batch_size + 1}, Image {image_idx + 1})"
                 )
                 writer.add_figure(f"Test_Image_with_prediction_boxes/image_{image_idx}_batch_{batch_start//args.test_batch_size +1}", fig, global_step=image_idx + batch_start//args.test_batch_size +1)
-            print(type(final_boxes))
-            print(type(final_scores), final_scores)
-            print(type(final_classes), final_classes)
+
             batch_query_results = {
                 "batch_index": batch_start // args.test_batch_size + 1,
                 "image_idx": image_idx + batch_start,
@@ -556,6 +571,156 @@ def one_shot_detection_batches(
     logger.info(f"Finished prediction of all images")
     return all_batch_results, coco_results
 
+def one_shot_detection_batches(
+    model,
+    processor,
+    query_embeddings,
+    classes,
+    args: "RunOptions",
+    writer: Optional["SummaryWriter"] = None    
+):
+    # Move the model to GPU if available
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    print(f"Using device: {device}")
+
+    images = load_image_group(args.target_image_paths)
+    
+    coco_results = []
+    random_visualize = random.random() <= 0.2
+
+    logger.info("Performing Prediction on test images")
+    total_batches = (len(images) + args.test_batch_size - 1) // args.test_batch_size
+    pbar = tqdm(total=total_batches, desc="Processing test batches")
+
+    ttime = 0
+    
+    for batch_start in range(0, len(images), args.test_batch_size):
+
+        start_CPUtoGPU =  torch.cuda.Event(enable_timing=True)
+        end_CPUtoGPU =  torch.cuda.Event(enable_timing=True)
+
+        torch.cuda.empty_cache()
+        image_batch = images[batch_start : batch_start + args.test_batch_size]
+        target_pixel_values = processor(
+            images=image_batch, return_tensors="pt"
+        ).pixel_values.to(device)
+
+        
+        with torch.no_grad():
+            feature_map = model.image_embedder(target_pixel_values)[0]
+
+            b, h, w, d = map(int, feature_map.shape)
+            target_boxes = model.box_predictor(
+                feature_map.reshape(b, h * w, d), feature_map=feature_map
+            ) # dimension = [batch_size, nb_of_boxes, 4]
+
+            reshaped_feature_map = feature_map.view(b, h * w, d)
+
+            query_embeddings_tensor = torch.stack(query_embeddings) # Shape: (num_batches, batch_size, hidden_size)
+            target_class_predictions, _ = model.class_predictor(reshaped_feature_map, query_embeddings_tensor)  # Shape: [batch_size, num_queries, num_classes]
+            target_boxes_np = target_boxes.detach()  # Keep in GPU
+
+            scores = torch.sigmoid(target_class_predictions)
+            top_indices = (scores > args.confidence_threshold).any(dim=-1)
+            filtered_scores = scores[top_indices]            
+            filtered_boxes = target_boxes_np[top_indices]
+            max_scores, max_indexes = torch.max(filtered_scores, dim=1)
+            class_ids = torch.tensor([classes[idx] for idx in max_indexes.tolist()]).to(device)
+
+            nms_boxes, nms_scores, nms_classes = nms_batched(filtered_boxes, max_scores, class_ids, args.nms_threshold)
+            print(f"shape of final boxes: {nms_boxes.shape}")
+            print(f"final scores and classes: {nms_scores, nms_classes}")
+
+            for image_idx in range(len(image_batch)):
+                    for box, score, cls in zip(nms_boxes, nms_scores, nms_classes):
+                        coco_results.append({
+                            "image_id": image_idx + batch_start,
+                            "category_id": cls.item() if isinstance(cls, torch.Tensor) else cls,
+                            "bbox": box.tolist() if isinstance(box, torch.Tensor) else box,
+                            "score": score.item() if isinstance(score, torch.Tensor) else score
+                        })
+            '''
+            print(len(classes))
+            for idx, cls in enumerate(classes):
+                if args.topk_test is not None:
+                    #?????????????
+                    topk_scores, topk_indices = torch.topk(target_class_predictions[:, :, idx].reshape(-1), k=args.topk_test[idx], dim=0)
+                    scores = torch.sigmoid(topk_scores)
+                    #??????????
+
+                else:
+                    scores = torch.sigmoid(target_class_predictions[:, :,idx]).unsqueeze(-1)
+
+                    print("shape of scores: ", scores.shape, scores)
+                    top_indices = (scores > args.confidence_threshold)
+                    print(f"type of top indices: {type(top_indices)} and shape: {top_indices.shape}")
+
+                # Collect corresponding class IDs for the selected indices
+                class_ids = [idx] * len(top_indices)
+
+                if not args.nms_between_classes:
+                    #???????????????????????????????????????????????????
+
+                    # Accumulate boxes and scores for each class
+                  #  class_wise_boxes = torch.masked_select(target_boxes_np, mask).view(b, -1, 4)
+                  #  class_wise_scores = scores[mask].view(b, -1, 4)
+
+                  #  nms_boxes, nms_scores, _,_= nms_tf_batched(class_wise_boxes, class_wise_scores, iou_threshold= args.nms_threshold, score_threshold= args.confidence_threshold)
+                    class_ids = [idx]*len(nms_boxes)
+
+                    all_boxes.append(nms_boxes)
+                    all_scores.append(nms_scores)
+                    all_class_ids.extend(class_ids)
+                    #?????????????????????????????????????????????????ù
+
+
+                else:                 
+                    # Append the filtered boxes to all_boxes
+                   
+                    filtered_boxes = target_boxes_np[top_indices]  # Shape: [2, 12, 4]
+                    
+                    print(f"shape of filtered boxes = {filtered_boxes.shape}")
+                    all_boxes.append(filtered_boxes)
+                    print(f"shape of all boxes = {all_boxes.shape}")
+                    all_scores.append(scores[top_indices])
+                    all_class_ids.extend(class_ids)
+
+            # we either have all the bboxes, scores, and classes for all the classes/images
+            # or we have the bboxes, scores, classes for all classes/images with NMS applied to bboxes of the same class, and scores and classes filtered accordingly
+
+            if all_boxes:
+                print(f"length of all boxes: {len(all_boxes)}, and shape of one box: {all_boxes[0].shape}")
+                
+                #final_boxes = tf.concat(all_boxes, axis=0)
+                #final_scores = tf.concat(all_scores, axis=0)
+
+                if args.nms_between_classes:
+                    nms_boxes, nms_scores, nms_classes,_ = nms_tf_batched(all_boxes, all_scores,  iou_threshold= args.nms_threshold, score_threshold= args.confidence_threshold)
+
+                else:
+                    nms_boxes = all_boxes
+                    nms_scores = all_scores
+                    nms_classes =all_class_ids
+
+                # Prepare and append results
+                for image_idx in range(len(image_batch)):
+                    for box, score, cls in zip(nms_boxes, nms_scores, nms_classes):
+                        coco_results.append({
+                            "image_id": image_idx + batch_start,
+                            "category_id": CLASS2ID[cls],
+                            "bbox": [float(coord) for coord in box],
+                            "score": float(score)
+                        })
+                    '''
+                    
+        pbar.update(1)
+
+    #writer.flush()
+    #logger.info(f"Finished prediction of all images, the results are: \n {pformat(all_batch_results, indent=2, underscore_numbers=True)}")
+    logger.info(f"Finished prediction of all images")
+    return coco_results
+
 
 if __name__ == "__main__":
 
@@ -565,7 +730,7 @@ if __name__ == "__main__":
         target_image_paths="test_images", 
         comment="test_time_taken", 
         query_batch_size=8, 
-        test_batch_size=10, 
+        test_batch_size=2, 
         visualize_test_images=True,
         nms_threshold=0.5
     )
@@ -580,6 +745,7 @@ if __name__ == "__main__":
     print(torch.cuda.device_count())
     print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
 
+    
     # Find the objects in the query images
     if options.manual_query_selection:
         zero_shot_detection(model, processor, options, writer)
@@ -597,8 +763,25 @@ if __name__ == "__main__":
             writer
         )
 
+    with open("classes.json", 'w') as f:
+        json.dump(classes, f)
+
+    # Save the list of GPU tensors to a file
+    torch.save(query_embeddings, 'query_embeddings_gpu.pth')
+
+
+    '''
+    with open("classes.json", 'r') as f:
+        classes = json.load(f)
+
+    # Load the list of tensors onto the GPU
+    query_embeddings = torch.load('query_embeddings_gpu.pth', map_location='cuda')
+
+    
+    
     # Detect query objects in test images
-    results, coco_results = one_shot_detection_batches(
+
+    results, coco_results = one_shot_detection(
         model,
         processor,
         query_embeddings,
@@ -607,9 +790,16 @@ if __name__ == "__main__":
         writer
     )
 
-    with open(f"results_cocoFormat.json", "w") as f:
-            json.dump(coco_results, f)
+    '''
+    coco_results = one_shot_detection_batches(
+        model,
+        processor,
+        query_embeddings,
+        classes,
+        options,
+        writer
+    )
 
-    with open(f"results_.json", "w") as f:
-        json.dump(results, f)
-    
+    with open(f"results_cocoFormat_NEW.json", "w") as f:
+        json.dump(coco_results, f)
+
