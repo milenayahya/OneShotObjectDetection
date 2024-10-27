@@ -11,3 +11,6 @@ test_images/
 testenv/
 coco_query_objects_filtered/
 results_cocoFormat.json
+results_batched.json
+results_non_batched.json
+classes.json
