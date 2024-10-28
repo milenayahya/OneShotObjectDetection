@@ -2,7 +2,7 @@ from transformers import Owlv2Processor, Owlv2ForObjectDetection
 import requests
 import random
 import json
-from PIL import Image, ImageDraw
+from PIL import Image
 import torch
 import numpy as np
 import os
@@ -29,6 +29,8 @@ from safetensors.torch import save_file
 from safetensors import safe_open
 from torchvision.ops import batched_nms
 from collections import defaultdict
+import tensorflow as tf
+from ultralytics.utils.ops import xywhn2xyxy
 #from logs.tglog import RequestsHandler, LogstashFormatter, TGFilter
 
 
@@ -71,6 +73,7 @@ logger = logging.getLogger(__name__)
 
 # Colors for bounding boxes for different source queries
 
+
 ID2COLOR = {
     1: "red",
     2: "green",
@@ -111,17 +114,126 @@ def nms_tf(
     #logger.info("NMS completed. Kept %d boxes.", len(filtered_bboxes))
     return filtered_bboxes, scores, filtered_classes
 
-import tensorflow as tf
+def convert_to_cxcywh_format(boxes, img_indices, batch, dir):
+    """
+    Convert bounding boxes from (x1, y1, x2, y2) to (cx, cy, w, h).
 
-def nms_batched(boxes, scores, classes, im_indices, threshold):
-   # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-   # boxes = torch.cat([torch.tensor(coco_to_left_upper_right_lower(b), dtype=torch.float32).unsqueeze(0) for b in boxes], dim=0).to(device)  # [N, 4]
+    Parameters:
+    - boxes: list of PyTorch tensors, each tensor of shape (4,) representing a bounding box in the format (x1, y1, x2, y2).
+
+    Returns:
+    - A list of PyTorch tensors, each of shape (4,) in the format (cx, cy, w, h).
+
+    THIS FUNCTION NORMALIZES THE COORDINATES
+    """
+    cxcywh_boxes = []
+    
+    for id, box in enumerate(boxes):
+        im_id = img_indices[id] + batch
+        im = open_image_by_index(dir, im_id)
+        width = im.width
+        height = im.height
+
+        x1, y1, x2, y2 = box
+        # Calculate cx, cy, w, h
+        cx = (x1 + x2) / 2
+        cy = (y1 + y2) / 2
+        w = x2 - x1
+        h = y2 - y1
+
+        # Normalize the coordinates
+        cx /= width
+        cy /= height
+        w /= width
+        h /= height
+
+        # Ensure the output is on the same device as the input box
+        cxcywh_boxes.append(torch.tensor([cx, cy, w, h], device=box.device))
+
+    cxcywh_boxes = torch.stack(cxcywh_boxes)
+    return cxcywh_boxes
+
+def convert_from_x1y1x2y2_to_coco(boxes):
+    """
+    Convert bounding boxes from (x1, y1, x2, y2) to (x, y, width, height).
+
+    Parameters:
+    - boxes: list of PyTorch tensors, each tensor of shape (4,) representing a bounding box in the format (x1, y1, x2, y2).
+
+    Returns:
+    - A list of PyTorch tensors, each of shape (4,) in the format (x, y, width, height).
+    """
+    coco_boxes = []
+    
+    for box in boxes:
+        x1, y1, x2, y2 = box
+
+        # Calculate x, y, width, height
+        x = x1
+        y = y1
+        width = x2 - x1
+        height = y2 - y1
+
+        # Ensure the output is on the same device as the input box
+        coco_boxes.append(torch.tensor([x, y, width, height], device=box.device))
+
+    coco_boxes = torch.stack(coco_boxes)
+    return coco_boxes
+
+def convert_boxes(cxcywh_boxes, img_indices, batch, dir):
+    """
+    Convert bounding boxes from (cx, cy, w, h) to (x1, y1, x2, y2).
+
+    Parameters:
+    - cxcywh_boxes: list of PyTorch tensors, each tensor of shape (4,) representing a bounding box in the format (cx, cy, w, h).
+
+    Returns:
+    - A list of PyTorch tensors, each of shape (4,) in the format (x1, y1, x2, y2).
+    """
+
+
+    converted_boxes = []
+    
+    for id, box in enumerate(cxcywh_boxes):
+        print("box before conversion:", box)
+        im_id = img_indices[id] + batch
+        im = open_image_by_index(dir, im_id)
+        width = im.width
+        height = im.height
+        cx, cy, w, h = box
+        
+        cx_pixel = cx * width
+        cy_pixel = cy * height
+        w_pixel = w * width
+        h_pixel = h * height
+        
+        # Calculate x1, y1, x2, y2
+        x1 = cx_pixel - w_pixel / 2
+        y1 = cy_pixel - h_pixel / 2
+        x2 = cx_pixel + w_pixel / 2
+        y2 = cy_pixel + h_pixel / 2
+        
+        print("box after conversion:", torch.tensor([x1, y1, x2, y2], device=box.device))
+       # Ensure the output is on the same device as the input box
+        converted_boxes.append(torch.tensor([x1, y1, x2, y2], device=box.device))
+
+    converted_boxes = torch.stack(converted_boxes)
+
+    return converted_boxes
+
+
+def nms_batched(boxes, scores, classes, im_indices, batch, threshold, dir):
+    
+    boxes = convert_boxes(boxes, im_indices, batch, dir)
     indices = batched_nms(boxes, scores, classes, threshold)
     filtered_boxes = boxes[indices]
     filtered_scores = scores[indices]
     filtered_classes = classes[indices]
     filtered_indices = im_indices[indices]
-    return filtered_boxes, filtered_scores, filtered_classes, filtered_indices
+    filtered_boxes_cxcy = convert_to_cxcywh_format(filtered_boxes, filtered_indices, batch, dir)
+    filtered_boxes_coco = convert_from_x1y1x2y2_to_coco(filtered_boxes)
+
+    return filtered_boxes_cxcy, filtered_boxes_cxcy, filtered_scores, filtered_classes, filtered_indices
 
 def get_preprocessed_image(pixel_values: torch.Tensor) -> Image.Image:
     pixel_values = pixel_values.squeeze().cpu().numpy()
@@ -227,7 +339,7 @@ def visualize_objectnesses_batch(
 
         ax.set_xlim(0, 1)
         ax.set_ylim(1, 0)
-        ax.set_title(f"Zero-Shot on {category}: Top {topk} objects by objectness,")
+        ax.set_title(f"Zero-Shot on {ID2CLASS[category]}: Top {topk} objects by objectness,")
         # Add image with bounding boxes to the writer
         writer.add_figure(f"Query_Images_with_boxes/image_{idx}_batch{batch_start//batch_size}", fig, global_step= batch_start+idx+1)
         writer.flush()
@@ -605,58 +717,66 @@ def read_results(filepath):
     image_data = dict(image_data)
     return image_data
 
-def visualize_test_images(image_data, writer, options, target_pixel_values):
+def visualize_test_images(image_data, writer, target_pixel_values, random= False):
 
+    if random:
+        random_indices = np.random.choice(len(image_data), int(0.2 * len(image_data)), replace=False)
 
     unnormalized_target_images = []
     for pixel_value in target_pixel_values.squeeze(0):
         unnormalized_image = get_preprocessed_image(pixel_value.cpu())
         unnormalized_target_images.append(unnormalized_image)
 
-    
-
     for image_id, data in image_data.items():
-        #image = open_image_by_index(options.target_image_paths, image_id)
-        image = unnormalized_target_images[image_id]
-        bboxes = data['bboxes']
-        scores = data['scores']
-        categories = data['categories']
 
-        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-        ax.imshow(image, extent=(0, 1, 1, 0))
-        ax.set_axis_off()
-        for i, (box, score, cls) in enumerate(
-                    zip(bboxes, scores, categories)
-            ):
-            cx, cy, w, h = box
-            ax.plot(
+        if not random or (random and image_id in random_indices):
+            #image = open_image_by_index(options.target_image_paths, image_id)
+            image = unnormalized_target_images[image_id]
+            width = image.width
+            height = image.height
+            bboxes = data['bboxes']
+            scores = data['scores']
+            categories = data['categories']
+
+            fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+            ax.imshow(image, extent=(0, 1, 1, 0))
+            ax.set_axis_off()
+            for i, (box, score, cls) in enumerate(
+                        zip(bboxes, scores, categories)
+                ):
+                
+                cx, cy, w, h = box
+                ax.plot(
                         [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
                         [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
                         color=ID2COLOR[cls], 
                         alpha=0.5,
                         linestyle="-"
-            )
-            ax.text(
-                        cx - w / 2 + 0.015,
-                        cy + h / 2 - 0.015,
-                        f"Class: {ID2CLASS[cls]} Score: {score:1.2f}",  # Indicate which query the result is from
-                        ha="left",
-                        va="bottom",
-                        color="black",
-                        bbox={
-                            "facecolor": "white",
-                            "edgecolor": ID2COLOR[
-                                cls
-                            ],  # Use respective color
-                            #"edgecolor": colors[
-                            #    CLASS2ID[cls] - 1
-                            #],  # Use respective color
-                            "boxstyle": "square,pad=.3",
-                        },
-                    )
-            ax.set_xlim(0, 1)
-            ax.set_ylim(1, 0)
-        writer.add_figure(f"Test_Image_with_prediction_boxes/image_{image_id}", fig)
+                )
+                ax.text(
+                            cx - w / 2 + 0.015,
+                            cy + h / 2 - 0.015,
+                            f"Class: {ID2CLASS[cls]} Score: {score:1.2f}",  # Indicate which query the result is from
+                            ha="left",
+                            va="bottom",
+                            color="black",
+                            bbox={
+                                "facecolor": "white",
+                                "edgecolor": ID2COLOR[
+                                    cls
+                                ],  # Use respective color
+                                #"edgecolor": colors[
+                                #    CLASS2ID[cls] - 1
+                                #],  # Use respective color
+                                "boxstyle": "square,pad=.3",
+                            },
+                        )
+                ax.set_xlim(0, 1)
+                ax.set_ylim(1, 0)
+            writer.add_figure(f"Test_Image_with_prediction_boxes/image_{image_id}", fig)
+
+        else:
+            continue
 
     
 def one_shot_detection_batches(
@@ -744,25 +864,28 @@ def one_shot_detection_batches(
             filtered_scores = flattened_scores[valid_indices]
             filtered_classes = flattened_classes[valid_indices]
             filtered_image_indices = flattened_image_indices[valid_indices]
-
+        
             #NMS only on same class
-            nms_boxes, nms_scores, nms_classes, nms_image_indices = nms_batched(
-                filtered_boxes, filtered_scores, filtered_classes, filtered_image_indices,  args.nms_threshold
-            )
+            nms_boxes, nms_boxes_coco, nms_scores, nms_classes, nms_image_indices = nms_batched(
+                filtered_boxes, filtered_scores, filtered_classes, filtered_image_indices, batch_start, args.nms_threshold, args.target_image_paths
+            )            
 
             # Collect results in COCO format
             for idx, (box, score, cls, img_idx) in enumerate(zip(nms_boxes, nms_scores, nms_classes, nms_image_indices)):
+
+                rounded_box = [round(coord, 2) for coord in box.tolist()]
                 coco_results.append({
                     "image_id": img_idx.item() + batch_start,  # Map to the original image index
                     "category_id": cls.item(),
-                    "bbox": box.tolist(),
-                    "score": score.item()
+                    "bbox": rounded_box,
+                    "score": round(score.item(), 2)
                 })
             
         pbar.update(1)
+
     all_target_pixel_values = torch.cat(all_target_pixel_values, dim=0)
-    print("shape of all target pixel values shape: ", all_target_pixel_values.shape)
     logger.info(f"Finished prediction of all images")
+    
     return coco_results, all_target_pixel_values
 
 
@@ -772,11 +895,11 @@ if __name__ == "__main__":
     options = RunOptions(
         source_image_paths="fewshot_query_images",
         target_image_paths="test_images", 
-        comment="test_time_taken", 
+        comment="test_final", 
         query_batch_size=8, 
         test_batch_size=2, 
         visualize_test_images=True,
-        nms_threshold=0.5
+        nms_threshold=0.3
     )
 
     # Image-Conditioned Object Detection
@@ -846,14 +969,22 @@ if __name__ == "__main__":
         writer
     )
 
-    with open(f"results_batched.json", "w") as f:
-        json.dump(coco_results, f)
+    try:
+        with open(f"results_batched.json", "w") as f:
+            json.dump(coco_results, f, indent=4)
+        print("File written successfully.")
+    except Exception as e:
+        print(f"Error writing file: {e}")
+
+    image_data = read_results("results_batched.json")
+
+    visualize_test_images(image_data, writer, target_pixel_values, random=False)
+    
 
 
 #    np.save('my_list.npy', np.array(target_pixel_values.cpu()))
 
-    image_data = read_results("results_batched.json")
-
-    visualize_test_images(image_data, writer, options, target_pixel_values)
     
 
+# i save results normalized in cx cy format, then read them to plotù
+# instead i want to save them in coco format... so i can use the same function to read them and plot them

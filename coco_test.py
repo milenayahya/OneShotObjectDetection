@@ -73,7 +73,7 @@ def run_all_tasks(tasks: Optional[dict[Tasks, RunOptions]] = None):
         writer
         )
 
-        results, coco_results = one_shot_detection_batches(
+        coco_results, target_pixel_values = one_shot_detection_batches(
             model,
             processor,
             query_embeddings,
@@ -86,9 +86,6 @@ def run_all_tasks(tasks: Optional[dict[Tasks, RunOptions]] = None):
         with open(f"results_cocoFormat_{task_key}.json", "w") as f:
             json.dump(coco_results, f)
 
-        with open(f"results_{task_key}.json", "w") as f:
-            json.dump(results, f)
-        
         writer.close() 
 
 if __name__ == "__main__":
