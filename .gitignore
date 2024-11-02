@@ -14,3 +14,8 @@ results_cocoFormat.json
 results_batched.json
 results_non_batched.json
 classes.json
+classes_coco.json
+results_batched_coco.json
+results_batched_plotting.json
+query_embeddings_coco_gpu.pth
+

@@ -22,15 +22,12 @@ import torch.cuda.amp as amp
 import logging
 from tqdm import tqdm
 from RunOptions import RunOptions
-#from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
-from coco_preprocess import coco_to_left_upper_right_lower
+from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
 from config import PROJECT_BASE_PATH
-from safetensors.torch import save_file
-from safetensors import safe_open
 from torchvision.ops import batched_nms
 from collections import defaultdict
 import tensorflow as tf
-from ultralytics.utils.ops import xywhn2xyxy
+from pycocotools.coco import COCO
 #from logs.tglog import RequestsHandler, LogstashFormatter, TGFilter
 
 
@@ -73,7 +70,7 @@ logger = logging.getLogger(__name__)
 
 # Colors for bounding boxes for different source queries
 
-
+'''
 ID2COLOR = {
     1: "red",
     2: "green",
@@ -84,7 +81,7 @@ linestyles = ["-", "-", "--", "-"]
 ID2CLASS = {1: "apple", 2: "cat", 3: "dog", 4: "usb"}
 CLASS2ID = {v: k for k, v in ID2CLASS.items()}
 
-'''
+
 colors = ["red", "green", "blue"]
 linestyles = ["-", "-", "-"]
 ID2CLASS = {1: "squirrel", 2: "nail", 3: "pin"}
@@ -195,7 +192,7 @@ def convert_boxes(cxcywh_boxes, img_indices, batch, dir):
     converted_boxes = []
     
     for id, box in enumerate(cxcywh_boxes):
-        print("box before conversion:", box)
+       
         im_id = img_indices[id] + batch
         im = open_image_by_index(dir, im_id)
         width = im.width
@@ -213,7 +210,6 @@ def convert_boxes(cxcywh_boxes, img_indices, batch, dir):
         x2 = cx_pixel + w_pixel / 2
         y2 = cy_pixel + h_pixel / 2
         
-        print("box after conversion:", torch.tensor([x1, y1, x2, y2], device=box.device))
        # Ensure the output is on the same device as the input box
         converted_boxes.append(torch.tensor([x1, y1, x2, y2], device=box.device))
 
@@ -233,7 +229,7 @@ def nms_batched(boxes, scores, classes, im_indices, batch, threshold, dir):
     filtered_boxes_cxcy = convert_to_cxcywh_format(filtered_boxes, filtered_indices, batch, dir)
     filtered_boxes_coco = convert_from_x1y1x2y2_to_coco(filtered_boxes)
 
-    return filtered_boxes_cxcy, filtered_boxes_cxcy, filtered_scores, filtered_classes, filtered_indices
+    return filtered_boxes_cxcy, filtered_boxes_coco, filtered_scores, filtered_classes, filtered_indices
 
 def get_preprocessed_image(pixel_values: torch.Tensor) -> Image.Image:
     pixel_values = pixel_values.squeeze().cpu().numpy()
@@ -700,83 +696,108 @@ def open_image_by_index(dir, index):
 
     return image
 
+def get_filename_by_index(dir, index):
+    files = os.listdir(dir)
+    images = [f for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', 'JPEG'))]
+    if index < 0 or index >= len(images):
+        raise IndexError("Image index out of range")
+    image_filename = images[index]
 
-def read_results(filepath):
+    return image_filename
+
+def read_results(filepath, random_selection=False):
+    """
+    Read results from a JSON file and randomly select 10 image IDs if random_selection is True.
+
+    Parameters:
+    - filepath: Path to the JSON file.
+    - random_selection: Boolean flag to indicate whether to randomly select 10 image IDs.
+
+    Returns:
+    - A dictionary with image data.
+    """
     with open(filepath, 'r') as f:
         results = json.load(f)
+    print("length of results:", len(results))
 
     image_data = defaultdict(lambda: {'bboxes': [], 'scores': [], 'categories': []})
 
+    if random_selection:
+        # Get all unique image IDs
+        all_image_ids = list(set(result['image_id'] for result in results))
+        # Randomly select 10 image IDs
+        selected_image_ids = random.sample(all_image_ids, int(len(all_image_ids) * 0.2))
+    else:
+        selected_image_ids = None
+
     for result in results:
         image_id = result['image_id']
-        image_data[image_id]['bboxes'].append(result['bbox'])
-        image_data[image_id]['scores'].append(result['score'])
-        image_data[image_id]['categories'].append(result['category_id'])
+        if not random_selection or image_id in selected_image_ids:
+            image_data[image_id]['bboxes'].append(result['bbox'])
+            image_data[image_id]['scores'].append(result['score'])
+            image_data[image_id]['categories'].append(result['category_id'])
 
     # Optionally convert to a regular dict if you prefer not to use defaultdict
     image_data = dict(image_data)
+    print("length of image_data:", len(image_data))
     return image_data
 
-def visualize_test_images(image_data, writer, target_pixel_values, random= False):
+def visualize_test_images(filepath, writer, target_pixel_values, random_selection=False):
 
-    if random:
-        random_indices = np.random.choice(len(image_data), int(0.2 * len(image_data)), replace=False)
-
+    image_data = read_results(filepath, random_selection)
+    
     unnormalized_target_images = []
     for pixel_value in target_pixel_values.squeeze(0):
         unnormalized_image = get_preprocessed_image(pixel_value.cpu())
         unnormalized_target_images.append(unnormalized_image)
 
     for image_id, data in image_data.items():
+ 
+        #image = open_image_by_index(options.target_image_paths, image_id)
+        image = unnormalized_target_images[image_id]
+        width = image.width
+        height = image.height
+        bboxes = data['bboxes']
+        scores = data['scores']
+        categories = data['categories']
 
-        if not random or (random and image_id in random_indices):
-            #image = open_image_by_index(options.target_image_paths, image_id)
-            image = unnormalized_target_images[image_id]
-            width = image.width
-            height = image.height
-            bboxes = data['bboxes']
-            scores = data['scores']
-            categories = data['categories']
+        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+        ax.imshow(image, extent=(0, 1, 1, 0))
+        ax.set_axis_off()
+        for i, (box, score, cls) in enumerate(
+                    zip(bboxes, scores, categories)
+            ):
+            
+            cx, cy, w, h = box
+            ax.plot(
+                    [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
+                    [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
+                    color=ID2COLOR[cls], 
+                    alpha=0.5,
+                    linestyle="-"
+            )
+            ax.text(
+                        cx - w / 2 + 0.015,
+                        cy + h / 2 - 0.015,
+                        f"Class: {ID2CLASS[cls]} Score: {score:1.2f}",  # Indicate which query the result is from
+                        ha="left",
+                        va="bottom",
+                        color="black",
+                        bbox={
+                            "facecolor": "white",
+                            "edgecolor": ID2COLOR[
+                                cls
+                            ],  # Use respective color
+                            #"edgecolor": colors[
+                            #    CLASS2ID[cls] - 1
+                            #],  # Use respective color
+                            "boxstyle": "square,pad=.3",
+                        },
+            )
+            ax.set_xlim(0, 1)
+            ax.set_ylim(1, 0)
+        writer.add_figure(f"Test_Image_with_prediction_boxes/image_{image_id}", fig)
 
-            fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-            ax.imshow(image, extent=(0, 1, 1, 0))
-            ax.set_axis_off()
-            for i, (box, score, cls) in enumerate(
-                        zip(bboxes, scores, categories)
-                ):
-                
-                cx, cy, w, h = box
-                ax.plot(
-                        [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
-                        [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
-                        color=ID2COLOR[cls], 
-                        alpha=0.5,
-                        linestyle="-"
-                )
-                ax.text(
-                            cx - w / 2 + 0.015,
-                            cy + h / 2 - 0.015,
-                            f"Class: {ID2CLASS[cls]} Score: {score:1.2f}",  # Indicate which query the result is from
-                            ha="left",
-                            va="bottom",
-                            color="black",
-                            bbox={
-                                "facecolor": "white",
-                                "edgecolor": ID2COLOR[
-                                    cls
-                                ],  # Use respective color
-                                #"edgecolor": colors[
-                                #    CLASS2ID[cls] - 1
-                                #],  # Use respective color
-                                "boxstyle": "square,pad=.3",
-                            },
-                        )
-                ax.set_xlim(0, 1)
-                ax.set_ylim(1, 0)
-            writer.add_figure(f"Test_Image_with_prediction_boxes/image_{image_id}", fig)
-
-        else:
-            continue
 
     
 def one_shot_detection_batches(
@@ -793,14 +814,14 @@ def one_shot_detection_batches(
     print(f"Using device: {device}")
 
     images = load_image_group(args.target_image_paths)
-    
     coco_results = []
-    random_visualize = random.random() <= 0.2
+    cxcy_results = []
 
+    mapping = create_image_id_mapping('coco-2017/validation/labels.json')
     logger.info("Performing Prediction on test images")
     total_batches = (len(images) + args.test_batch_size - 1) // args.test_batch_size
     pbar = tqdm(total=total_batches, desc="Processing test batches")
-
+    i = 0
     ttime = 0
     all_target_pixel_values = []
     for batch_start in range(0, len(images), args.test_batch_size):
@@ -813,11 +834,11 @@ def one_shot_detection_batches(
         target_pixel_values = processor(
             images=image_batch, return_tensors="pt"
         ).pixel_values.to(device)
-        all_target_pixel_values.append(target_pixel_values)
+        if args.visualize_test_images:
+            all_target_pixel_values.append(target_pixel_values)
         
         with torch.no_grad():
             feature_map = model.image_embedder(target_pixel_values)[0]
-
             b, h, w, d = map(int, feature_map.shape)
             target_boxes = model.box_predictor(
                 feature_map.reshape(b, h * w, d), feature_map=feature_map
@@ -829,27 +850,42 @@ def one_shot_detection_batches(
             target_class_predictions, _ = model.class_predictor(reshaped_feature_map, query_embeddings_tensor)  # Shape: [batch_size, num_queries, num_classes]
             target_boxes = target_boxes.detach()  # Keep in GPU
             scores = torch.sigmoid(target_class_predictions)
-            top_indices = (scores > args.confidence_threshold).any(dim=-1)
-           
-            filtered_boxes = [target_boxes[i][top_indices[i]] for i in range(b)]
-            filtered_scores = [scores[i][top_indices[i]] for i in range(b)]    
 
-            # Padding filtered boxes and scores to have the same number of boxes across the batch
-            max_boxes_per_image = max(len(boxes) for boxes in filtered_boxes)
-            padded_boxes = torch.zeros(b, max_boxes_per_image, 4, device=device)
-            padded_scores = torch.full((b, max_boxes_per_image), -float('inf'), device=device)
-            padded_classes = torch.zeros(b, max_boxes_per_image, device=device, dtype=torch.long)
-            image_indices = torch.zeros(b, max_boxes_per_image, device=device, dtype=torch.long)
+            if args.topk_test is not None:
+                top_indices = torch.argsort(scores[:, :, 0], descending=True)[:, :args.topk_test]
+                scores = torch.sigmoid(scores[torch.arange(b)[:, None], top_indices])
+                target_boxes = target_boxes[torch.arange(b)[:, None], top_indices]  
 
-            for i in range(b):
-                num_boxes = filtered_boxes[i].shape[0]
-                padded_boxes[i, :num_boxes] = filtered_boxes[i]
-                padded_scores[i, :num_boxes] = filtered_scores[i].max(dim=1)[0]
-                
-                max_scores, max_indexes = torch.max(filtered_scores[i], dim=1)
-                class_ids = torch.tensor([classes[idx] for idx in max_indexes.tolist()]).to(device)
-                padded_classes[i, :num_boxes] = class_ids  # Update padded_classes correctly
-                image_indices[i, :num_boxes] = i  # Assign the current batch index to each box
+            if args.mode == "test":
+                top_indices = (scores > args.confidence_threshold).any(dim=-1)
+            
+                filtered_boxes = [target_boxes[i][top_indices[i]] for i in range(b)]
+                filtered_scores = [scores[i][top_indices[i]] for i in range(b)]    
+
+                # Padding filtered boxes and scores to have the same number of boxes across the batch
+                max_boxes_per_image = max(len(boxes) for boxes in filtered_boxes)
+                padded_boxes = torch.zeros(b, max_boxes_per_image, 4, device=device)
+                padded_scores = torch.full((b, max_boxes_per_image), -float('inf'), device=device)
+                padded_classes = torch.zeros(b, max_boxes_per_image, device=device, dtype=torch.long)
+                image_indices = torch.zeros(b, max_boxes_per_image, device=device, dtype=torch.long)
+
+                for i in range(b):
+                    num_boxes = filtered_boxes[i].shape[0]
+                    padded_boxes[i, :num_boxes] = filtered_boxes[i]
+                    padded_scores[i, :num_boxes] = filtered_scores[i].max(dim=1)[0]
+                    
+                    max_scores, max_indexes = torch.max(filtered_scores[i], dim=1)
+                    class_ids = torch.tensor([classes[idx] for idx in max_indexes.tolist()]).to(device)
+                    padded_classes[i, :num_boxes] = class_ids  # Update padded_classes correctly
+                    image_indices[i, :num_boxes] = i  # Assign the current batch index to each box
+
+            else:
+                # Validation mode
+                padded_boxes = target_boxes
+                padded_scores = scores
+                class_indexes = torch.argmax(scores, dim=-1).flatten().tolist()
+                padded_classes = torch.tensor([classes[idx] for idx in class_indexes], device=device) 
+                image_indices = torch.arange(b, device=device).unsqueeze(1).expand(b, padded_boxes.shape[1]).contiguous()
 
             # Reshape the padded data for batched NMS
             # Flatten the padded tensors for NMS
@@ -858,45 +894,113 @@ def one_shot_detection_batches(
             flattened_classes = padded_classes.view(-1)
             flattened_image_indices = image_indices.view(-1)
 
-            # Filter out padded values (-inf scores)
-            valid_indices = flattened_scores > -float('inf')
-            filtered_boxes = flattened_boxes[valid_indices]
-            filtered_scores = flattened_scores[valid_indices]
-            filtered_classes = flattened_classes[valid_indices]
-            filtered_image_indices = flattened_image_indices[valid_indices]
-        
+            if args.mode == "test":
+                # Filter out padded values (-inf scores)
+                valid_indices = flattened_scores > -float('inf')
+                flattened_boxes = flattened_boxes[valid_indices]
+                flattened_scores = flattened_scores[valid_indices]
+                flattened_classes = flattened_classes[valid_indices]
+                flattened_image_indices = flattened_image_indices[valid_indices]
+            
             #NMS only on same class
             nms_boxes, nms_boxes_coco, nms_scores, nms_classes, nms_image_indices = nms_batched(
-                filtered_boxes, filtered_scores, filtered_classes, filtered_image_indices, batch_start, args.nms_threshold, args.target_image_paths
-            )            
-
+                flattened_boxes, flattened_scores, flattened_classes, flattened_image_indices, batch_start, args.nms_threshold, args.target_image_paths
+            )  
             # Collect results in COCO format
-            for idx, (box, score, cls, img_idx) in enumerate(zip(nms_boxes, nms_scores, nms_classes, nms_image_indices)):
+            for idx, (box, score, cls, img_idx) in enumerate(zip(nms_boxes_coco, nms_scores, nms_classes, nms_image_indices)):
 
                 rounded_box = [round(coord, 2) for coord in box.tolist()]
                 coco_results.append({
-                    "image_id": img_idx.item() + batch_start,  # Map to the original image index
+                    "image_id": map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item()+ batch_start)),
                     "category_id": cls.item(),
                     "bbox": rounded_box,
                     "score": round(score.item(), 2)
                 })
+
+            if args.visualize_test_images:
+                # Collect results in plotting format
+                for idx, (box, score, cls, img_idx) in enumerate(zip(nms_boxes, nms_scores, nms_classes, nms_image_indices)):
+
+                    rounded_box = [round(coord, 2) for coord in box.tolist()]
+                    cxcy_results.append({
+                        "image_id": img_idx.item() + batch_start,  # Map to the original image index
+                        "category_id": cls.item(),
+                        "bbox": rounded_box,
+                        "score": round(score.item(), 2)
+                    })
+
+            
             
         pbar.update(1)
 
-    all_target_pixel_values = torch.cat(all_target_pixel_values, dim=0)
-    logger.info(f"Finished prediction of all images")
-    
-    return coco_results, all_target_pixel_values
+        # Periodically save results to file every 30 batches
+        # TO DO: make the number of batches to save results to file a parameter
+        batch_index = batch_start // args.test_batch_size + 1
+        if batch_index % 1 == 0:
+            save_results(cxcy_results, coco_results, all_target_pixel_values, i, args)
+            logger.info(f"Saved results of 30 batches to file starting from batch {batch_index - 30} to batch {batch_index}")    
+            cxcy_results.clear()
+            coco_results.clear()
+            all_target_pixel_values.clear()
+            i += 1
 
+        torch.cuda.empty_cache()
+
+    if args.visualize_test_images:
+        all_target_pixel_values = torch.cat(all_target_pixel_values, dim=0)
+    logger.info(f"Finished prediction of all images")
+    pbar.close()
+
+    # Save the remaining results to file
+    save_results(cxcy_results, coco_results, all_target_pixel_values, i, args)
+    return cxcy_results, coco_results, all_target_pixel_values
+
+
+def save_results(cxcy_results, coco_results, all_target_pixel_values, i, options):
+
+    print("length of coco_results:", len(coco_results))
+    with open(f"results_{options.comment}.json", "a") as f:
+        for result in coco_results:
+            f.write(json.dumps(result) + '\n')
+   
+    if options.visualize_test_images:
+        with open(f"results_{options.comment}_plotting.json", "a") as f:
+            for result in cxcy_results:
+                f.write(json.dumps(result) + '\n')
+
+        torch.save(all_target_pixel_values, f"target_pixel_values_{i}_{options.comment}.pth")
+
+
+
+def create_image_id_mapping(labels_dir):
+    # Create a mapping from image file names to COCO image IDs
+    coco = COCO(labels_dir)
+    coco_img_ids = coco.getImgIds()
+    coco_imgs = coco.loadImgs(coco_img_ids)
+    mapping = {img['file_name']: img['id'] for img in coco_imgs}
+    return mapping
+
+def map_coco_ids(mapping, filename):
+    return mapping.get(filename, None)
+    
 
 if __name__ == "__main__":
 
 
+    coco_ids = get_coco_img_ids('coco-2017/validation/labels.json')
+    id = map_coco_ids(coco_ids, 0)
+    print(id)
+    
+    '''
+
+    
     options = RunOptions(
+        mode = "test",
         source_image_paths="fewshot_query_images",
         target_image_paths="test_images", 
         comment="test_final", 
         query_batch_size=8, 
+        confidence_threshold=0.1,
         test_batch_size=2, 
         visualize_test_images=True,
         nms_threshold=0.3
@@ -935,16 +1039,16 @@ if __name__ == "__main__":
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, 'query_embeddings_gpu.pth')
 
+
     '''
-    
     with open("classes.json", 'r') as f:
         classes = json.load(f)
 
     # Load the list of tensors onto the GPU
     query_embeddings = torch.load('query_embeddings_gpu.pth', map_location='cuda')
 
-    '''
     
+    '''
     # Detect query objects in test images
 
     results, coco_results = one_shot_detection(
@@ -958,9 +1062,10 @@ if __name__ == "__main__":
 
     with open(f"results_non_batched.json", "w") as f:
         json.dump(coco_results, f)
-    '''
     
-    coco_results, target_pixel_values = one_shot_detection_batches(
+    '''
+
+    cxcxy_results, coco_results, target_pixel_values = one_shot_detection_batches(
         model,
         processor,
         query_embeddings,
@@ -969,22 +1074,10 @@ if __name__ == "__main__":
         writer
     )
 
-    try:
-        with open(f"results_batched.json", "w") as f:
-            json.dump(coco_results, f, indent=4)
-        print("File written successfully.")
-    except Exception as e:
-        print(f"Error writing file: {e}")
-
-    image_data = read_results("results_batched.json")
-
-    visualize_test_images(image_data, writer, target_pixel_values, random=False)
+    
+    
+    target_pixel_values = torch.load('target_pixel_values.pth', map_location='cuda')
+    visualize_test_images("results_batched_plotting.json", writer, target_pixel_values, random_selection=True)
     
 
-
-#    np.save('my_list.npy', np.array(target_pixel_values.cpu()))
-
-    
-
-# i save results normalized in cx cy format, then read them to plotù
-# instead i want to save them in coco format... so i can use the same function to read them and plot them
+    '''

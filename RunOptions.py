@@ -6,6 +6,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 class RunOptions:
     def __init__(self, 
+                 mode = Literal["test", "validation"],
                  model = Owlv2ForObjectDetection,
                  processor = Owlv2Processor,
                  backbone: str = "google/owlv2-base-patch16-ensemble",
@@ -23,6 +24,7 @@ class RunOptions:
                  visualize_test_images: bool = True,
                  nms_between_classes: bool = True,
                  nms_threshold: float = 0.3):
+        self.mode = mode
         self.model = model  
         self.processor = processor 
         self.backbone = backbone
@@ -45,6 +47,7 @@ class RunOptions:
     def from_args(cls, args):
         """Creates an instance of RunOptions from parsed command-line arguments."""
         return cls(
+            mode = args.mode,
             model = args.model,
             processor = args.processor,
             backbone=args.backbone,
@@ -68,6 +71,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="Run options for one-shot object detection.")
     parser.add_argument("--backbone", type=str, default="google/owlv2-base-patch16-ensemble",
                         help="The backbone model to use.")
+    parser.add_argument("--mode", type=str, default="test",
+                        help="Mode of operation: test or validation.")
     parser.add_argument("--source_image_paths", type=str, default="query_images/",
                         help="Path to source images for querying.")
     parser.add_argument("--target_image_paths", type=str, default="test_images/",
