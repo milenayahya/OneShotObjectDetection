@@ -1,17 +1,18 @@
 from pathlib import Path
 from typing import Literal
 import argparse
+import json
 from transformers import Owlv2Processor, Owlv2ForObjectDetection
 from torch.utils.tensorboard import SummaryWriter
 
 class RunOptions:
     def __init__(self, 
-                 mode = Literal["test", "validation"],
+                 mode: Literal["test", "validation"],
+                 source_image_paths: str,
+                 target_image_paths: str,
                  model = Owlv2ForObjectDetection,
                  processor = Owlv2Processor,
                  backbone: str = "google/owlv2-base-patch16-ensemble",
-                 source_image_paths: str = "ImageNet_query_fewshot/",
-                 target_image_paths: str = "ImageNet_test/",
                  comment: str = "_3shot_on_ImageNet",
                  query_batch_size: int = 4,
                  test_batch_size: int = 4,
@@ -66,6 +67,29 @@ class RunOptions:
             nms_between_classes=args.nms_between_classes,
             nms_threshold=args.nms_threshold,
         )
+        
+    @classmethod
+    def from_json(cls, json_path: str):
+        """Create an instance of RunOptions from a JSON file."""
+        with open(json_path, 'r') as f:
+            params = json.load(f)
+        
+        # Initialize an instance of RunOptions with the JSON parameters
+        return cls(
+            mode=params["mode"],
+            source_image_paths=params["source_image_paths"],
+            target_image_paths=params["target_image_paths"],
+            comment=params["comment"],
+            query_batch_size=params["query_batch_size"],
+            test_batch_size=params["test_batch_size"],
+            topk_query=params["topk_query"],
+            k_shot=params["k_shot"],
+            manual_query_selection=params["manual_query_selection"],
+            confidence_threshold=params["confidence_threshold"],
+            visualize_query_images=params["visualize_query_images"],
+            visualize_test_images=params["visualize_test_images"],
+            nms_threshold=params["nms_threshold"]
+        )
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Run options for one-shot object detection.")
@@ -104,6 +128,7 @@ def parse_args():
 
     args = parser.parse_args()
     return args
+
 
 if __name__ == "__main__":
 

@@ -1,0 +1,16 @@
+{
+    "mode": "test",
+    "backbone": "google/owlv2-base-patch16-ensemble",
+    "source_image_paths": "fewshot_query_images",
+    "target_image_paths": "con_test/",
+    "comment": "interface_test",
+    "query_batch_size": 8,
+    "test_batch_size": 8,
+    "k_shot": 1,
+    "manual_query_selection": false,
+    "topk_query": 3,
+    "confidence_threshold": 0.96,
+    "visualize_query_images": true,
+    "nms_threshold": 0.3,
+    "visualize_test_images": true
+}

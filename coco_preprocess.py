@@ -306,7 +306,6 @@ def crop_image(dir, image_path, ann, cat, i):
     image = Image.open(image_path)
     filename = os.path.join(dir, f"{CLASS2ID[cat['name']]}_{cat['name']}_{i+1}.JPEG")
     cropped_im = image.crop(coco_to_left_upper_right_lower(ann['bbox']))
-    print(cropped_im.format)
     cropped_im.save(filename)
     image.close()
 

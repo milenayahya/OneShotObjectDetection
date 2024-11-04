@@ -22,7 +22,7 @@ import torch.cuda.amp as amp
 import logging
 from tqdm import tqdm
 from RunOptions import RunOptions
-from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+# from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
 from config import PROJECT_BASE_PATH
 from torchvision.ops import batched_nms
 from collections import defaultdict
@@ -70,7 +70,7 @@ logger = logging.getLogger(__name__)
 
 # Colors for bounding boxes for different source queries
 
-'''
+
 ID2COLOR = {
     1: "red",
     2: "green",
@@ -81,7 +81,7 @@ linestyles = ["-", "-", "--", "-"]
 ID2CLASS = {1: "apple", 2: "cat", 3: "dog", 4: "usb"}
 CLASS2ID = {v: k for k, v in ID2CLASS.items()}
 
-
+'''
 colors = ["red", "green", "blue"]
 linestyles = ["-", "-", "-"]
 ID2CLASS = {1: "squirrel", 2: "nail", 3: "pin"}
@@ -111,7 +111,7 @@ def nms_tf(
     #logger.info("NMS completed. Kept %d boxes.", len(filtered_bboxes))
     return filtered_bboxes, scores, filtered_classes
 
-def convert_to_cxcywh_format(boxes, img_indices, batch, dir):
+def convert_to_cxcywh_format(boxes, img_indices, batch, dir, per_image):
     """
     Convert bounding boxes from (x1, y1, x2, y2) to (cx, cy, w, h).
 
@@ -126,8 +126,12 @@ def convert_to_cxcywh_format(boxes, img_indices, batch, dir):
     cxcywh_boxes = []
     
     for id, box in enumerate(boxes):
-        im_id = img_indices[id] + batch
-        im = open_image_by_index(dir, im_id)
+        
+        if per_image:
+            im = Image.open(dir)
+        else:
+            im_id = img_indices[id] + batch
+            im = open_image_by_index(dir, im_id)
         width = im.width
         height = im.height
 
@@ -177,7 +181,7 @@ def convert_from_x1y1x2y2_to_coco(boxes):
     coco_boxes = torch.stack(coco_boxes)
     return coco_boxes
 
-def convert_boxes(cxcywh_boxes, img_indices, batch, dir):
+def convert_boxes(cxcywh_boxes, img_indices, batch, dir, per_image):
     """
     Convert bounding boxes from (cx, cy, w, h) to (x1, y1, x2, y2).
 
@@ -192,9 +196,13 @@ def convert_boxes(cxcywh_boxes, img_indices, batch, dir):
     converted_boxes = []
     
     for id, box in enumerate(cxcywh_boxes):
-       
-        im_id = img_indices[id] + batch
-        im = open_image_by_index(dir, im_id)
+
+        if per_image:
+            im = Image.open(dir)
+        else:
+            im_id = img_indices[id] + batch
+            im = open_image_by_index(dir, im_id)
+
         width = im.width
         height = im.height
         cx, cy, w, h = box
@@ -218,15 +226,15 @@ def convert_boxes(cxcywh_boxes, img_indices, batch, dir):
     return converted_boxes
 
 
-def nms_batched(boxes, scores, classes, im_indices, batch, threshold, dir):
+def nms_batched(boxes, scores, classes, im_indices, batch, threshold, dir, per_image):
     
-    boxes = convert_boxes(boxes, im_indices, batch, dir)
+    boxes = convert_boxes(boxes, im_indices, batch, dir, per_image)
     indices = batched_nms(boxes, scores, classes, threshold)
     filtered_boxes = boxes[indices]
     filtered_scores = scores[indices]
     filtered_classes = classes[indices]
     filtered_indices = im_indices[indices]
-    filtered_boxes_cxcy = convert_to_cxcywh_format(filtered_boxes, filtered_indices, batch, dir)
+    filtered_boxes_cxcy = convert_to_cxcywh_format(filtered_boxes, filtered_indices, batch, dir, per_image)
     filtered_boxes_coco = convert_from_x1y1x2y2_to_coco(filtered_boxes)
 
     return filtered_boxes_cxcy, filtered_boxes_coco, filtered_scores, filtered_classes, filtered_indices
@@ -707,7 +715,7 @@ def get_filename_by_index(dir, index):
 
 def read_results(filepath, random_selection=False):
     """
-    Read results from a JSON file and randomly select 10 image IDs if random_selection is True.
+    Read results from a JSON file and randomly select 20% of image IDs if random_selection is True.
 
     Parameters:
     - filepath: Path to the JSON file.
@@ -717,15 +725,14 @@ def read_results(filepath, random_selection=False):
     - A dictionary with image data.
     """
     with open(filepath, 'r') as f:
-        results = json.load(f)
-    print("length of results:", len(results))
+        results = [json.loads(line) for line in f]
 
     image_data = defaultdict(lambda: {'bboxes': [], 'scores': [], 'categories': []})
 
     if random_selection:
         # Get all unique image IDs
         all_image_ids = list(set(result['image_id'] for result in results))
-        # Randomly select 10 image IDs
+        # Randomly select image IDs
         selected_image_ids = random.sample(all_image_ids, int(len(all_image_ids) * 0.2))
     else:
         selected_image_ids = None
@@ -742,19 +749,26 @@ def read_results(filepath, random_selection=False):
     print("length of image_data:", len(image_data))
     return image_data
 
-def visualize_test_images(filepath, writer, target_pixel_values, random_selection=False):
+def visualize_test_images(filepath, writer, target_pixel_values, per_image, random_selection=False):
 
     image_data = read_results(filepath, random_selection)
+
+    if per_image:
+        unnormalized_image = get_preprocessed_image(target_pixel_values.squeeze(0).cpu())
     
-    unnormalized_target_images = []
-    for pixel_value in target_pixel_values.squeeze(0):
-        unnormalized_image = get_preprocessed_image(pixel_value.cpu())
-        unnormalized_target_images.append(unnormalized_image)
+    else:
+        unnormalized_target_images = []
+        for pixel_value in target_pixel_values.squeeze(0):
+            unnormalized_image = get_preprocessed_image(pixel_value.cpu())
+            unnormalized_target_images.append(unnormalized_image)
 
     for image_id, data in image_data.items():
  
         #image = open_image_by_index(options.target_image_paths, image_id)
-        image = unnormalized_target_images[image_id]
+        if per_image:
+            image = unnormalized_image
+        else:
+            image = unnormalized_target_images[image_id]
         width = image.width
         height = image.height
         bboxes = data['bboxes']
@@ -806,14 +820,22 @@ def one_shot_detection_batches(
     query_embeddings,
     classes,
     args: "RunOptions",
-    writer: Optional["SummaryWriter"] = None    
+    writer: Optional["SummaryWriter"] = None,   
+    per_image: bool = False 
 ):
     # Move the model to GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     print(f"Using device: {device}")
 
-    images = load_image_group(args.target_image_paths)
+    if per_image:
+        logger.info("Loading image")
+        if args.target_image_paths.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
+            images = [cv2.cvtColor(cv2.imread(args.target_image_paths), cv2.COLOR_BGR2RGB)]
+    
+    else:
+        images = load_image_group(args.target_image_paths)
+
     coco_results = []
     cxcy_results = []
 
@@ -904,14 +926,18 @@ def one_shot_detection_batches(
             
             #NMS only on same class
             nms_boxes, nms_boxes_coco, nms_scores, nms_classes, nms_image_indices = nms_batched(
-                flattened_boxes, flattened_scores, flattened_classes, flattened_image_indices, batch_start, args.nms_threshold, args.target_image_paths
+                flattened_boxes, flattened_scores, flattened_classes, flattened_image_indices, batch_start, args.nms_threshold, args.target_image_paths, per_image
             )  
             # Collect results in COCO format
             for idx, (box, score, cls, img_idx) in enumerate(zip(nms_boxes_coco, nms_scores, nms_classes, nms_image_indices)):
-
+                if per_image:
+                    im_id = args.target_image_paths
+                else:
+                    im_id = img_idx.item() + batch_start
                 rounded_box = [round(coord, 2) for coord in box.tolist()]
                 coco_results.append({
-                    "image_id": map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item()+ batch_start)),
+                    #"image_id": map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item()+ batch_start)),
+                    "image_id": im_id,
                     "category_id": cls.item(),
                     "bbox": rounded_box,
                     "score": round(score.item(), 2)
@@ -920,10 +946,14 @@ def one_shot_detection_batches(
             if args.visualize_test_images:
                 # Collect results in plotting format
                 for idx, (box, score, cls, img_idx) in enumerate(zip(nms_boxes, nms_scores, nms_classes, nms_image_indices)):
-
+                    if per_image:
+                        im_id = args.target_image_paths
+                    else:
+                        im_id = img_idx.item() + batch_start
                     rounded_box = [round(coord, 2) for coord in box.tolist()]
                     cxcy_results.append({
-                        "image_id": img_idx.item() + batch_start,  # Map to the original image index
+                        #"image_id": map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item()+ batch_start)),
+                        "image_id": im_id,
                         "category_id": cls.item(),
                         "bbox": rounded_box,
                         "score": round(score.item(), 2)
@@ -936,9 +966,9 @@ def one_shot_detection_batches(
         # Periodically save results to file every 30 batches
         # TO DO: make the number of batches to save results to file a parameter
         batch_index = batch_start // args.test_batch_size + 1
-        if batch_index % 1 == 0:
+        if batch_index % 40 == 0:
             save_results(cxcy_results, coco_results, all_target_pixel_values, i, args)
-            logger.info(f"Saved results of 30 batches to file starting from batch {batch_index - 30} to batch {batch_index}")    
+            #logger.info(f"Saved results of 30 batches to file starting from batch {batch_index - 30} to batch {batch_index}")    
             cxcy_results.clear()
             coco_results.clear()
             all_target_pixel_values.clear()
@@ -953,6 +983,7 @@ def one_shot_detection_batches(
 
     # Save the remaining results to file
     save_results(cxcy_results, coco_results, all_target_pixel_values, i, args)
+
     return cxcy_results, coco_results, all_target_pixel_values
 
 
@@ -976,6 +1007,8 @@ def create_image_id_mapping(labels_dir):
     # Create a mapping from image file names to COCO image IDs
     coco = COCO(labels_dir)
     coco_img_ids = coco.getImgIds()
+    id = 139
+    print("139 is in cooc ids:" ,id in (coco_img_ids))
     coco_imgs = coco.loadImgs(coco_img_ids)
     mapping = {img['file_name']: img['id'] for img in coco_imgs}
     return mapping
@@ -985,22 +1018,15 @@ def map_coco_ids(mapping, filename):
     
 
 if __name__ == "__main__":
-
-
-    coco_ids = get_coco_img_ids('coco-2017/validation/labels.json')
-    id = map_coco_ids(coco_ids, 0)
-    print(id)
     
-    '''
 
-    
     options = RunOptions(
         mode = "test",
         source_image_paths="fewshot_query_images",
-        target_image_paths="test_images", 
-        comment="test_final", 
+        target_image_paths="con_test/apples.jpg", 
+        comment="test", 
         query_batch_size=8, 
-        confidence_threshold=0.1,
+        confidence_threshold=0.96,
         test_batch_size=2, 
         visualize_test_images=True,
         nms_threshold=0.3
@@ -1071,13 +1097,14 @@ if __name__ == "__main__":
         query_embeddings,
         classes,
         options,
-        writer
+        writer,
+        per_image=True
     )
 
     
     
-    target_pixel_values = torch.load('target_pixel_values.pth', map_location='cuda')
-    visualize_test_images("results_batched_plotting.json", writer, target_pixel_values, random_selection=True)
+   # target_pixel_values = torch.load('target_pixel_values.pth', map_location='cuda')
+    visualize_test_images("results_test_plotting.json", writer, target_pixel_values, per_image=True, random_selection=False)
     
 
-    '''
+    
