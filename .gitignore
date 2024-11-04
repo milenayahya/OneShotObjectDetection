@@ -19,4 +19,4 @@ results_batched_coco.json
 results_batched_plotting.json
 query_embeddings_coco_gpu.pth
 query_embeddings_gpu.pth
-
+con_test/
