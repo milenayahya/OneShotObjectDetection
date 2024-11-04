@@ -7,7 +7,7 @@ import torch
 import json
 import os
 import struct
-from osod import zero_shot_detection, one_shot_detection_batches, find_query_patches_batches
+from osod import zero_shot_detection, one_shot_detection_batches, find_query_patches_batches, visualize_test_images
 
 def receive_all(connection, size):
     data = b''
@@ -132,7 +132,7 @@ if __name__ == "__main__":
                 options.target_image_paths = path
                 
                 # Perform one-shot detection for new images
-                _, predictions, _ = one_shot_detection_batches(
+                _, predictions, target_pixel_values= one_shot_detection_batches(
                     model,
                     processor,
                     query_embeddings,
@@ -143,6 +143,11 @@ if __name__ == "__main__":
                 )
                 # Send predictions back to the client
                 send_predictions(connection, predictions)
+
+                if options.visualize_test_images:
+                    path = path.split('/')[-1].split('.')[0]
+                    visualize_test_images(f"results_{path}_plotting.json", writer, target_pixel_values, per_image=True)
+                
                 print(f'Sent predictions for {filename}')
 
 

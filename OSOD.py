@@ -967,7 +967,7 @@ def one_shot_detection_batches(
         # TO DO: make the number of batches to save results to file a parameter
         batch_index = batch_start // args.test_batch_size + 1
         if batch_index % 40 == 0:
-            save_results(cxcy_results, coco_results, all_target_pixel_values, i, args)
+            save_results(cxcy_results, coco_results, all_target_pixel_values, i, args, per_image, im_id)
             #logger.info(f"Saved results of 30 batches to file starting from batch {batch_index - 30} to batch {batch_index}")    
             cxcy_results.clear()
             coco_results.clear()
@@ -982,22 +982,33 @@ def one_shot_detection_batches(
     pbar.close()
 
     # Save the remaining results to file
-    save_results(cxcy_results, coco_results, all_target_pixel_values, i, args)
+    save_results(cxcy_results, coco_results, all_target_pixel_values, i, args, per_image, im_id)
 
     return cxcy_results, coco_results, all_target_pixel_values
 
 
-def save_results(cxcy_results, coco_results, all_target_pixel_values, i, options):
+def save_results(cxcy_results, coco_results, all_target_pixel_values, i, options, per_image, im_id):
 
-    print("length of coco_results:", len(coco_results))
-    with open(f"results_{options.comment}.json", "a") as f:
-        for result in coco_results:
-            f.write(json.dumps(result) + '\n')
+    if per_image:
+        id = im_id.split("/")[-1].split(".")[0]
+        with open(f"results_{id}.json", "w") as f:
+            for result in coco_results:
+                f.write(json.dumps(result) + '\n')
+    else:
+        with open(f"results_{options.comment}.json", "a") as f:
+            for result in coco_results:
+                f.write(json.dumps(result) + '\n')
    
     if options.visualize_test_images:
-        with open(f"results_{options.comment}_plotting.json", "a") as f:
-            for result in cxcy_results:
-                f.write(json.dumps(result) + '\n')
+        if per_image:
+            id = im_id.split("/")[-1].split(".")[0]
+            with open(f"results_{id}_plotting.json", "w") as f:
+                for result in cxcy_results:
+                    f.write(json.dumps(result) + '\n')
+        else:
+            with open(f"results_{options.comment}_plotting.json", "a") as f:
+                for result in cxcy_results:
+                    f.write(json.dumps(result) + '\n')
 
         torch.save(all_target_pixel_values, f"target_pixel_values_{i}_{options.comment}.pth")
 
