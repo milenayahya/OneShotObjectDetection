@@ -20,3 +20,6 @@ results_batched_plotting.json
 query_embeddings_coco_gpu.pth
 query_embeddings_gpu.pth
 con_test/
+ImageNet_Queries_For_COCO/
+classes_imageNet.json
+query_embeddings_imageNet_gpu.pth

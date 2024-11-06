@@ -93,9 +93,9 @@ if __name__ == "__main__":
     
     options_1s = RunOptions(
         mode="test",
-        source_image_paths="coco_query_objects_filtered",
+        source_image_paths="ImageNet_Queries_For_COCO/",
         target_image_paths="coco-2017/validation/data", 
-        comment="coco_1shot_val", 
+        comment="imgNet_1shot_on_coco", 
         query_batch_size=8, 
         test_batch_size=8, 
         confidence_threshold=0.1,
@@ -109,7 +109,7 @@ if __name__ == "__main__":
     model = options_1s.model.from_pretrained(options_1s.backbone)
     processor = options_1s.processor.from_pretrained(options_1s.backbone)
     
-    '''
+    
     indexes, query_embeddings, classes = zero_shot_detection(
         model,
         processor,
@@ -117,14 +117,14 @@ if __name__ == "__main__":
         writer
     )
      
-    with open("classes_coco.json", 'w') as f:
+    with open("classes_imageNet.json", 'w') as f:
         json.dump(classes, f)
 
-    torch.save(query_embeddings, 'query_embeddings_coco_gpu.pth')
+    torch.save(query_embeddings, 'query_embeddings_imageNet_gpu.pth')
     
-    '''
-    query_embeddings = torch.load('query_embeddings_coco_gpu.pth')
-    classes = json.load(open("classes_coco.json", 'r'))
+
+   # query_embeddings = torch.load('query_embeddings_coco_gpu.pth')
+   # classes = json.load(open("classes_coco.json", 'r'))
 
     cxcy_results, coco_results, target_pixel_values = one_shot_detection_batches(
             model,
@@ -132,7 +132,8 @@ if __name__ == "__main__":
             query_embeddings,
             classes,
             options_1s,
-            writer
+            writer,
+            per_image= False
         ) 
 
     

@@ -22,7 +22,10 @@ if __name__ == '__main__':
     cocoGt=COCO(annFile)
 
     #initialize COCO detections api
-    resFile = 'results_coco_1shot_val.json'
+    
+    #resFile = 'results_coco_1shot_val.json'
+    resFile = 'results_imgNet_1shot_on_coco.json'
+    
     # Load results
     annotations = load_json_lines(resFile)
 
@@ -39,15 +42,12 @@ if __name__ == '__main__':
     else:
         # Initialize COCO detections api
         cocoDt = cocoGt.loadRes(annotations)
-    
-    
-
         imgIds=sorted(cocoGt.getImgIds())
-       
-
+        catIds = [1,2,3,4,5,6,7,16,17,18,26,47,48,50,54]
         # running evaluation
         cocoEval = COCOeval(cocoGt,cocoDt,annType)
-        cocoEval.params.imgIds  = [0]
+        cocoEval.params.imgIds  = imgIds
+        cocoEval.params.catIds = catIds
         cocoEval.evaluate()
         cocoEval.accumulate()
         cocoEval.summarize()

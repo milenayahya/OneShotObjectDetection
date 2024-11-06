@@ -22,30 +22,13 @@ import torch.cuda.amp as amp
 import logging
 from tqdm import tqdm
 from RunOptions import RunOptions
-# from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
 from config import PROJECT_BASE_PATH
 from torchvision.ops import batched_nms
 from collections import defaultdict
 import tensorflow as tf
 from pycocotools.coco import COCO
-#from logs.tglog import RequestsHandler, LogstashFormatter, TGFilter
 
-
-'''
-tg_handler = RequestsHandler()
-formatter = LogstashFormatter()
-filter = TGFilter()
-tg_handler.setFormatter(formatter)
-tg_handler.addFilter(filter)
-logging.basicConfig(
-    format="%(asctime)s [%(filename)s@%(funcName)s] [%(levelname)s]:> %(message)s",
-    handlers=[
-        logging.FileHandler(os.path.join(PROJECT_BASE_PATH, "logs/debug.log")),
-        logging.StreamHandler(),
-        tg_handler,
-    ],
-)
-'''
 # Directory and file path
 log_dir = os.path.join(PROJECT_BASE_PATH, "logs")
 # Create a timestamp for the log file name
@@ -69,8 +52,8 @@ logger = logging.getLogger(__name__)
 
 
 # Colors for bounding boxes for different source queries
-
-
+'''
+#Use for my data
 ID2COLOR = {
     1: "red",
     2: "green",
@@ -81,7 +64,8 @@ linestyles = ["-", "-", "--", "-"]
 ID2CLASS = {1: "apple", 2: "cat", 3: "dog", 4: "usb"}
 CLASS2ID = {v: k for k, v in ID2CLASS.items()}
 
-'''
+#Use for ImageNet
+
 colors = ["red", "green", "blue"]
 linestyles = ["-", "-", "-"]
 ID2CLASS = {1: "squirrel", 2: "nail", 3: "pin"}
@@ -96,6 +80,19 @@ def nms_tf(
         classes: List[str], 
         threshold: float
 )-> Tuple[tf.Tensor, tf.Tensor, List[str]]:
+    
+    """
+
+    Perform non-maximum suppression on a set of bounding boxes.
+    Parameters: 
+    - bboxes: A tensor of shape (N, 4) containing the bounding boxes in (x1, y1, x2, y2) format.
+    - scores: A tensor of shape (N,) containing the objectness scores for each bounding box.
+    - classes: A list of strings containing the class labels for each bounding box.
+    - threshold: The IoU threshold to use for NMS.
+    Returns:
+    - A tuple containing the filtered bounding boxes, scores, and classes.
+
+    """
     #logger.info("Applying NMS with threshold: %f on %d boxes", threshold, len(bboxes))
     bboxes = tf.cast(bboxes, dtype=tf.float32)
     x_min, y_min, x_max, y_max = tf.unstack(bboxes, axis=1)
@@ -228,6 +225,14 @@ def convert_boxes(cxcywh_boxes, img_indices, batch, dir, per_image):
 
 def nms_batched(boxes, scores, classes, im_indices, batch, threshold, dir, per_image):
     
+    '''
+    Perform non-maximum suppression on a batch of bounding boxes.
+    Takes boxes in (cx, cy, w, h) format and converts them to (x1, y1, x2, y2) format for NMS.
+    Convets results back to (cx, cy, w, h) format after NMS.
+    Additionally, converts the boxes to COCO format (x, y, width, height) for evaluation.
+
+    '''
+    
     boxes = convert_boxes(boxes, im_indices, batch, dir, per_image)
     indices = batched_nms(boxes, scores, classes, threshold)
     filtered_boxes = boxes[indices]
@@ -251,6 +256,10 @@ def get_preprocessed_image(pixel_values: torch.Tensor) -> Image.Image:
     return unnormalized_image
 
 def load_image_group(image_dir: str) -> List[np.ndarray]:
+    '''
+    Load images from a directory.
+    
+    '''
     logger.info("Loading images from directory: %s", image_dir)
     images = []
     for image_name in os.listdir(image_dir):
@@ -266,6 +275,14 @@ def load_image_group(image_dir: str) -> List[np.ndarray]:
     return images
 
 def load_query_image_group(image_dir: str, k=None) -> List[Tuple[np.ndarray, str]]:
+    
+    '''
+
+    Load query images and their categories from a directory.
+    Parameters: directory, k (number of query images to load per category)
+    Returns: a list of tuples, each containing an image and its category
+
+    '''
     logger.info("Loading query images and categories from directory: %s", image_dir)
     images = []
     for image_name in os.listdir(image_dir):
@@ -289,6 +306,11 @@ def load_query_image_group(image_dir: str, k=None) -> List[Tuple[np.ndarray, str
 def visualize_objectnesses_batch(
     image_batch, source_boxes, source_pixel_values, objectnesses, topk, batch_start, batch_size, classes, writer = Optional[SummaryWriter]
 ):
+    """
+
+    Visualize the objectness scores and bounding boxes for a batch of query images. (Zero-Shot Detection Visualization)
+
+    """
     unnormalized_source_images = []
     for pixel_value in source_pixel_values:
         unnormalized_image = get_preprocessed_image(pixel_value)
@@ -355,6 +377,10 @@ def zero_shot_detection(
     writer: Optional[SummaryWriter] = None,
 )-> Union[Tuple[List[int], List[np.ndarray], List[str]], None]:
 
+    """
+    Perform zero-shot detection on a batch of query images.
+
+    """
     source_class_embeddings = []
     images, classes = zip(*load_query_image_group(args.source_image_paths, args.k_shot))
     images = list(images)
@@ -438,6 +464,11 @@ def find_query_patches_batches(
     indexes: List [int], 
     writer: Optional["SummaryWriter"] = None
 ):
+    """
+    Find the query embeddings for a batch of query images based on the provided indexes.
+    Allows manual selection of query object in query image based on index.
+
+    """
     query_embeddings = []
     images, classes = zip(*load_query_image_group(args.source_image_paths))
     images = list(images)
@@ -487,6 +518,11 @@ def one_shot_detection(
     args: "RunOptions",
     writer: Optional["SummaryWriter"] = None    
 ):
+    """
+    Take a batch of images, and perform One-Shot Detection on every image in the batch, in a sequential manner.
+    Plots directly each image with the predicted bounding boxes and confidence scores.
+
+    """
     # Move the model to GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
@@ -694,6 +730,11 @@ def one_shot_detection(
 
 
 def open_image_by_index(dir, index):
+    """
+    Open an image from a directory by its index.
+
+    """
+
     files = os.listdir(dir)
     images = [f for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', 'JPEG'))]
     if index < 0 or index >= len(images):
@@ -705,6 +746,10 @@ def open_image_by_index(dir, index):
     return image
 
 def get_filename_by_index(dir, index):
+    """
+    Get the filename of an image from a directory by its index.
+    
+    """
     files = os.listdir(dir)
     images = [f for f in files if f.lower().endswith(('.png', '.jpg', '.jpeg', '.bmp', '.gif', 'JPEG'))]
     if index < 0 or index >= len(images):
@@ -719,7 +764,7 @@ def read_results(filepath, random_selection=False):
 
     Parameters:
     - filepath: Path to the JSON file.
-    - random_selection: Boolean flag to indicate whether to randomly select 10 image IDs.
+    - random_selection: Boolean flag to indicate whether to randomly select 20% of image IDs.
 
     Returns:
     - A dictionary with image data.
@@ -750,6 +795,10 @@ def read_results(filepath, random_selection=False):
     return image_data
 
 def visualize_test_images(filepath, writer, target_pixel_values, per_image, random_selection=False):
+    """
+    Visualize the test images with the predicted bounding boxes and confidence scores.
+    
+    """
 
     image_data = read_results(filepath, random_selection)
 
@@ -823,6 +872,14 @@ def one_shot_detection_batches(
     writer: Optional["SummaryWriter"] = None,   
     per_image: bool = False 
 ):
+    """
+    Perform One-Shot Detection on a batch of images.
+    'test' mode allows specifying "topk" and/or confidence threshold for filtering the results.
+    'validation' mode does not apply any filtering on the predicted boxes.
+    'per_image' flag is used to indicate whether args.target_image_paths is a single image or a directory.
+    'per_image' is set to True when server is waiting for an image to perform real-time detection.
+
+    """
     # Move the model to GPU if available
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
@@ -928,6 +985,7 @@ def one_shot_detection_batches(
             nms_boxes, nms_boxes_coco, nms_scores, nms_classes, nms_image_indices = nms_batched(
                 flattened_boxes, flattened_scores, flattened_classes, flattened_image_indices, batch_start, args.nms_threshold, args.target_image_paths, per_image
             )  
+
             # Collect results in COCO format
             for idx, (box, score, cls, img_idx) in enumerate(zip(nms_boxes_coco, nms_scores, nms_classes, nms_image_indices)):
                 if per_image:
@@ -936,8 +994,8 @@ def one_shot_detection_batches(
                     im_id = img_idx.item() + batch_start
                 rounded_box = [round(coord, 2) for coord in box.tolist()]
                 coco_results.append({
-                    #"image_id": map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item()+ batch_start)),
-                    "image_id": im_id,
+                    "image_id": map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item()+ batch_start)),
+                    #"image_id": im_id,
                     "category_id": cls.item(),
                     "bbox": rounded_box,
                     "score": round(score.item(), 2)
@@ -952,8 +1010,8 @@ def one_shot_detection_batches(
                         im_id = img_idx.item() + batch_start
                     rounded_box = [round(coord, 2) for coord in box.tolist()]
                     cxcy_results.append({
-                        #"image_id": map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item()+ batch_start)),
-                        "image_id": im_id,
+                        "image_id": map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item()+ batch_start)),
+                        #"image_id": im_id,
                         "category_id": cls.item(),
                         "bbox": rounded_box,
                         "score": round(score.item(), 2)
@@ -988,6 +1046,10 @@ def one_shot_detection_batches(
 
 
 def save_results(cxcy_results, coco_results, all_target_pixel_values, i, options, per_image, im_id):
+    """
+    Save the results to a JSON file.
+    
+    """
 
     if per_image:
         id = im_id.split("/")[-1].split(".")[0]
@@ -1015,7 +1077,10 @@ def save_results(cxcy_results, coco_results, all_target_pixel_values, i, options
 
 
 def create_image_id_mapping(labels_dir):
-    # Create a mapping from image file names to COCO image IDs
+    """
+    Create a mapping from image file names to COCO image IDs
+
+    """
     coco = COCO(labels_dir)
     coco_img_ids = coco.getImgIds()
     id = 139
@@ -1032,13 +1097,13 @@ if __name__ == "__main__":
     
 
     options = RunOptions(
-        mode = "test",
+        mode = "validation",
         source_image_paths="fewshot_query_images",
-        target_image_paths="con_test/apples.jpg", 
-        comment="test", 
+        target_image_paths="test_images", 
+        comment="val", 
         query_batch_size=8, 
         confidence_threshold=0.96,
-        test_batch_size=2, 
+        test_batch_size=4, 
         visualize_test_images=True,
         nms_threshold=0.3
     )
@@ -1109,13 +1174,11 @@ if __name__ == "__main__":
         classes,
         options,
         writer,
-        per_image=True
+        per_image=False
     )
 
-    
-    
    # target_pixel_values = torch.load('target_pixel_values.pth', map_location='cuda')
-    visualize_test_images("results_test_plotting.json", writer, target_pixel_values, per_image=True, random_selection=False)
+    visualize_test_images(f"results_{options.comment}_plotting.json", writer, target_pixel_values, per_image=False, random_selection=False)
     
 
     
