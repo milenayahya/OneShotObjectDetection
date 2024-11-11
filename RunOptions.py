@@ -97,9 +97,9 @@ def parse_args():
                         help="The backbone model to use.")
     parser.add_argument("--mode", type=str, default="test",
                         help="Mode of operation: test or validation.")
-    parser.add_argument("--source_image_paths", type=str, default="query_images/",
+    parser.add_argument("--source_image_paths", type=str, default="Queries/query_images/",
                         help="Path to source images for querying.")
-    parser.add_argument("--target_image_paths", type=str, default="test_images/",
+    parser.add_argument("--target_image_paths", type=str, default="Test/test_images/",
                         help="Path to target images for testing.")
     parser.add_argument("--comment", type=str, default="",
                         help="Optional comment for this run.")

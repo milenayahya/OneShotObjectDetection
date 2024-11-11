@@ -1,10 +1,14 @@
-from osod import zero_shot_detection, one_shot_detection_batches, read_results, visualize_test_images
+from osod import zero_shot_detection, one_shot_detection_batches,visualize_results
 from RunOptions import RunOptions 
 from tensorboardX import SummaryWriter
 from typing import Optional, Literal
 import json
 import torch
+import os
+import random
+import shutil
 from osod import logger
+from config import query_dir, test_dir, results_dir
 
 Tasks = Literal["1_shot_multi_nms", "1_shot_single_nms", "5_shot_multi_nms", "5_shot_single_nms"]
 
@@ -55,7 +59,32 @@ def create_task_options() -> dict[Tasks, RunOptions]:
             nms_threshold=0.5
         )
     }
+def create_val_subset(source_dir, target_dir, num_images=100):
+    """
+    Randomly select a specified number of images from the source directory
+    and store them in the target directory.
 
+    Parameters:
+    - source_dir: Path to the source directory containing the images.
+    - target_dir: Path to the target directory where the selected images will be stored.
+    - num_images: Number of images to select and copy.
+    """
+    if not os.path.exists(target_dir):
+        os.makedirs(target_dir)
+
+    # Get a list of all image files in the source directory
+    image_files = [f for f in os.listdir(source_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+
+    # Randomly select the specified number of images
+    selected_images = random.sample(image_files, num_images)
+
+    # Copy the selected images to the target directory
+    for image in selected_images:
+        source_path = os.path.join(source_dir, image)
+        target_path = os.path.join(target_dir, image)
+        shutil.copyfile(source_path, target_path)
+
+    print(f"Copied {num_images} images to {target_dir}")
 def run_all_tasks(tasks: Optional[dict[Tasks, RunOptions]] = None):
     tasks = tasks or create_task_options()
 
@@ -91,17 +120,19 @@ def run_all_tasks(tasks: Optional[dict[Tasks, RunOptions]] = None):
 
 if __name__ == "__main__":
     
+   # create_val_subset("coco-2017/validation/data", "coco_val_subset", num_images=100)
+
     options_1s = RunOptions(
         mode="test",
-        source_image_paths="ImageNet_Queries_For_COCO/",
-        target_image_paths="coco-2017/validation/data", 
-        comment="imgNet_1shot_on_coco", 
+        source_image_paths= os.path.join(query_dir, "coco_query_objects_filtered/1_shot/"),
+        target_image_paths=os.path.join(test_dir, "coco_val_subset/"),
+        comment="coco_queries", 
         query_batch_size=8, 
         test_batch_size=8, 
-        confidence_threshold=0.1,
-        topk_test=170,
+        confidence_threshold=0.7,
+        topk_test=20,
         k_shot=1,
-        visualize_test_images=False,
+        visualize_test_images=True,
         nms_threshold=0.3
     )
 
@@ -109,7 +140,7 @@ if __name__ == "__main__":
     model = options_1s.model.from_pretrained(options_1s.backbone)
     processor = options_1s.processor.from_pretrained(options_1s.backbone)
     
-    
+    '''
     indexes, query_embeddings, classes = zero_shot_detection(
         model,
         processor,
@@ -117,16 +148,18 @@ if __name__ == "__main__":
         writer
     )
      
-    with open("classes_imageNet.json", 'w') as f:
+    file = os.path.join(query_dir, f"classes_{options_1s.comment}.json")    
+    with open(file, 'w') as f:
         json.dump(classes, f)
 
-    torch.save(query_embeddings, 'query_embeddings_imageNet_gpu.pth')
-    
+    torch.save(query_embeddings, f"Queries/query_embeddings_{options_1s.comment}_gpu.pth")
 
-   # query_embeddings = torch.load('query_embeddings_coco_gpu.pth')
-   # classes = json.load(open("classes_coco.json", 'r'))
+   
+    file = os.path.join(query_dir, f"classes_{options_1s.comment}.json")    
+    query_embeddings = torch.load(f"Queries/query_embeddings_{options_1s.comment}_gpu.pth")
+    classes = json.load(open(file, 'r'))
 
-    cxcy_results, coco_results, target_pixel_values = one_shot_detection_batches(
+    coco_results = one_shot_detection_batches(
             model,
             processor,
             query_embeddings,
@@ -135,7 +168,10 @@ if __name__ == "__main__":
             writer,
             per_image= False
         ) 
-
+    '''
+    result_file = os.path.join(results_dir, f"results_{options_1s.comment}.json")
+    visualize_results(result_file, writer, per_image=False, args=options_1s, random_selection=False)
+    
     
     writer.close()  
 

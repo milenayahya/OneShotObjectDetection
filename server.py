@@ -94,13 +94,15 @@ if __name__ == "__main__":
     # Set the socket to non-blocking mode
     sock.settimeout(5)
     
-  #  zero_shot()
+    #zero_shot()
 
-    with open("classes.json", 'r') as f:
+    
+    with open("classes_imageNet.json", 'r') as f:
         classes = json.load(f)
 
     # Load the list of tensors onto the GPU
-    query_embeddings = torch.load('query_embeddings_gpu.pth', map_location='cuda')
+    query_embeddings = torch.load('query_embeddings_imageNet_gpu.pth', map_location='cuda')
+
 
     counter = 0
     initial_batch_processed = False
@@ -145,8 +147,8 @@ if __name__ == "__main__":
                 send_predictions(connection, predictions)
 
                 if options.visualize_test_images:
-                    path = path.split('/')[-1].split('.')[0]
-                    visualize_test_images(f"results_{path}_plotting.json", writer, target_pixel_values, per_image=True)
+                    im = path.split('/')[-1].split('.')[0]
+                    visualize_test_images(f"results_{im}_plotting.json", writer, target_pixel_values, per_image=True)
                 
                 print(f'Sent predictions for {filename}')
 
