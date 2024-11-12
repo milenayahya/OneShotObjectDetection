@@ -269,5 +269,18 @@ def create_image_id_mapping(labels_dir):
     return mapping
 
 def map_coco_ids(mapping, filename):
+    """
+    Retrieve the COCO image ID for a given image file name.
+
+    """
     return mapping.get(filename, None)
     
+def map_coco_filenames(mapping, img_id):
+    """
+    Retrieve the image file name for a given COCO image ID.
+
+    """
+    for key, val in mapping.items():
+        if val == img_id:
+            return key
+    return None

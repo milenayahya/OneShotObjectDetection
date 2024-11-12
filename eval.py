@@ -9,6 +9,7 @@ from torchvision.ops import nms
 import torch
 from torch.utils.tensorboard import SummaryWriter  
 import matplotlib.pyplot as plt 
+from coco_preprocess import ID2CLASS
 pylab.rcParams['figure.figsize'] = (10.0, 8.0)
 
 def load_json_lines(file_path):
@@ -34,38 +35,41 @@ def calculate_iou(pred_bbox, gt_bbox):
     union_area = pred_area + gt_area - inter_area
 
     iou = inter_area / union_area if union_area > 0 else 0
-    return iou       
- 
-def plot_pr_curve(results):
-    thresholds = [result[0] for result in results]
-    precisions = [result[1][0] for result in results]  # AP @ IoU=0.50:0.95
-    recalls = [result[1][8] for result in results]  # AR @ IoU=0.50:0.95
-
+    return iou 
+      
+def plot_pr_curve(cocoEval, precisions, recall, category_id, cat_id_to_index):
     plt.figure()
-    plt.plot(recalls, precisions, marker='o')
+    cat_idx = cat_id_to_index[category_id]
+    for iou_idx in range(precisions.shape[0]):
+        precision = precisions[iou_idx,  :, cat_idx, 0, 2] # all areas and max detections
+        # Filter out invalid precision and recall values
+        valid_indices = precision != -1
+        precision = precision[valid_indices]
+
+        if precision.shape[0] == 0:
+            print(f"Warning: No valid precision values for IoU={cocoEval.params.iouThrs[iou_idx]:.2f}")
+            continue  # Skip if precision array is empty
+
+        if precision.shape[0] != recall.shape[0]:
+            print(f"Warning: Precision and Recall shapes do not match. Precision shape: {precision.shape}, Recall shape: {recall.shape}")
+            continue  # Skip if shapes don't match
+
+        plt.plot(recall, precision, label=f'IoU={cocoEval.params.iouThrs[iou_idx]:.2f}')
+
     plt.xlabel('Recall')
     plt.ylabel('Precision')
-    plt.title('Precision-Recall Curve')
-    plt.grid(True)
+    plt.title(f'Precision-Recall Curve for Category ID {category_id} ({ID2CLASS[category_id]})')
+    plt.legend()
+    plt.grid()
     plt.show()
 
-
-if __name__ == '__main__':
-
-    
-    annType = 'bbox'      
-    annFile = 'Results/instances_val2017.json'
+def evaluate(annFile, resFile):
     cocoGt=COCO(annFile)
-
-    #initialize COCO detections api
-    resFile = 'Results/results_coco_queries.json'
-
-    # Load results
     annotations = load_json_lines(resFile)
+
 
     results_img_ids = {ann['image_id'] for ann in annotations}
     results_cat_ids = {ann['category_id'] for ann in annotations}
-    print("results img ids",results_img_ids)
     gt_img_ids = set(cocoGt.getImgIds())
    
     # Check if image IDs match
@@ -75,24 +79,11 @@ if __name__ == '__main__':
         # Initialize COCO detections api
         cocoDt = cocoGt.loadRes(annotations)
         imgIds= list(results_img_ids)
-        single_imgId = imgIds[0]
         catIds = list(results_cat_ids)
-    
-        # Print predictions for the selected image
-        predictions = [ann for ann in annotations if ann['image_id'] == single_imgId]
-        print("Length of predictions: ", len(predictions))
 
-        print(f"Predictions for Image ID {single_imgId}:")
-        for pred in predictions:
-            print(pred)
+        #mappping to index the categories in the evaluation results
+        cat_id_to_index = {cat_id: i for i, cat_id in enumerate(catIds)}
 
-        # Print ground truth annotations for the selected image
-        gt_annotations = cocoGt.loadAnns(cocoGt.getAnnIds(imgIds=[single_imgId]))
-        print(f"Ground Truth for Image ID {single_imgId}:")
-        for gt in gt_annotations:
-            print(gt)
-        
-       
         cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
         cocoEval.params.imgIds = imgIds
         cocoEval.params.catIds = catIds  # Set to a single category ID
@@ -100,6 +91,104 @@ if __name__ == '__main__':
         cocoEval.evaluate()
         cocoEval.accumulate()
         cocoEval.summarize()
+
+        precisions = cocoEval.eval['precision'] 
+        recalls = cocoEval.params.recThrs
+
+        for cat_id in catIds:
+            plot_pr_curve(cocoEval, precisions, recalls, cat_id, cat_id_to_index)
+
+def tune_confidence_threshold(annFile, resFile, threshold_range):
+    cocoGt = COCO(annFile)
+    annotations = load_json_lines(resFile)
+    cat_ids = {ann['category_id'] for ann in annotations}
+
+    f1_scores_all = {}
+    for cat_id in cat_ids:
+        f1_scores = []
+        for threshold in threshold_range:
+            filtered_annotations = [ann for ann in annotations if ann['score'] > threshold and ann['category_id'] == cat_id]
+            if not filtered_annotations:
+                continue
+
+            results_img_ids = {ann['image_id'] for ann in filtered_annotations}
+            gt_img_ids = set(cocoGt.getImgIds())
+
+            cats = {ann['category_id'] for ann in filtered_annotations}
+            mapping = {cat: i for i, cat in enumerate(cats)}
+
+            # Check if image IDs match
+            if not results_img_ids.issubset(gt_img_ids):
+                print(f"Error: Results contain image IDs not present in COCO ground truth for category {cat_id}.")
+                continue
+
+            # Initialize COCO detections api
+            cocoDt = cocoGt.loadRes(filtered_annotations)
+            imgIds = list(results_img_ids)
+
+
+            cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
+            cocoEval.params.imgIds = imgIds
+            cocoEval.params.catIds = [cat_id]
+
+            cocoEval.evaluate()
+            cocoEval.accumulate()
+            cocoEval.summarize()
+
+            precision = cocoEval.eval['precision']  # [TxRxKxAxM]
+            recall = cocoEval.eval['recall']  # [TxKxAxM]
+
+            ### extract relevant precision and recall for category
+            precision = precision[:, :, mapping[cat_id], 0, 2]  # all areas and max detections
+            recall = recall[:, mapping[cat_id], 0, 2]
+
+            # Calculate F1 score
+            f1_score = 2 * (precision * recall) / (precision + recall)
+            f1_score = np.nan_to_num(f1_score, nan=0.0)  # Replace NaN with 0
+            f1_scores.append(f1_score)
         
-    
+        f1_scores_all[cat_id] = f1_scores  
+
+    return f1_scores_all
+
+
+if __name__ == '__main__':
+
+    annFile = 'coco-2017/raw/instances_val2017.json'
+    resFile = 'Results/results_coco_queries.json'
+
+   # evaluate(annFile, resFile)
+
+    # Tune confidence threshold
+    thresholds = np.arange(0.1, 1.0, 0.05)
+    f1_scores = tune_confidence_threshold(annFile, resFile, thresholds)
+    print(f"F1 scores for different confidence thresholds: {f1_scores}")
+
+
+
+
+    # MANAGE IOU THRESHOLD in F1 SCORE CALCULATION
+
+
+
+
+
+    '''
+    single_imgId = imgIds[0]
+    # Print predictions for the selected image
+    predictions = [ann for ann in annotations if ann['image_id'] == single_imgId]
+    print("Length of predictions: ", len(predictions))
+
+    print(f"Predictions for Image ID {single_imgId}:")
+    for pred in predictions:
+        print(pred)
+
+    # Print ground truth annotations for the selected image
+    gt_annotations = cocoGt.loadAnns(cocoGt.getAnnIds(imgIds=[single_imgId]))
+    print(f"Ground Truth for Image ID {single_imgId}:")
+    for gt in gt_annotations:
+        print(gt)
+
+    '''
+
     
