@@ -63,7 +63,7 @@ def plot_pr_curve(cocoEval, precisions, recall, category_id, cat_id_to_index):
     plt.grid()
     plt.show()
 
-def evaluate(annFile, resFile):
+def evaluate(annFile, resFile, plot_pr = False):
     cocoGt=COCO(annFile)
     annotations = load_json_lines(resFile)
 
@@ -95,17 +95,20 @@ def evaluate(annFile, resFile):
         precisions = cocoEval.eval['precision'] 
         recalls = cocoEval.params.recThrs
 
-        for cat_id in catIds:
-            plot_pr_curve(cocoEval, precisions, recalls, cat_id, cat_id_to_index)
+        if plot_pr: 
+            for cat_id in catIds:
+                plot_pr_curve(cocoEval, precisions, recalls, cat_id, cat_id_to_index)
 
 def tune_confidence_threshold(annFile, resFile, threshold_range):
     cocoGt = COCO(annFile)
     annotations = load_json_lines(resFile)
     cat_ids = {ann['category_id'] for ann in annotations}
 
-    f1_scores_all = {}
+    optimal_thresholds = {}
     for cat_id in cat_ids:
-        f1_scores = []
+        best_f1 = 0
+        best_threshold = 0
+
         for threshold in threshold_range:
             filtered_annotations = [ann for ann in annotations if ann['score'] > threshold and ann['category_id'] == cat_id]
             if not filtered_annotations:
@@ -130,10 +133,11 @@ def tune_confidence_threshold(annFile, resFile, threshold_range):
             cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
             cocoEval.params.imgIds = imgIds
             cocoEval.params.catIds = [cat_id]
+            cocoEval.params.iouThrs = [0.5]
 
             cocoEval.evaluate()
             cocoEval.accumulate()
-            cocoEval.summarize()
+         #   cocoEval.summarize()
 
             precision = cocoEval.eval['precision']  # [TxRxKxAxM]
             recall = cocoEval.eval['recall']  # [TxKxAxM]
@@ -145,11 +149,15 @@ def tune_confidence_threshold(annFile, resFile, threshold_range):
             # Calculate F1 score
             f1_score = 2 * (precision * recall) / (precision + recall)
             f1_score = np.nan_to_num(f1_score, nan=0.0)  # Replace NaN with 0
-            f1_scores.append(f1_score)
         
-        f1_scores_all[cat_id] = f1_scores  
-
-    return f1_scores_all
+            # Find the maximum F1 score
+            max_f1 = np.max(f1_score)
+            if max_f1 > best_f1:
+                best_f1 = max_f1
+                best_threshold = threshold
+        
+        optimal_thresholds[cat_id] = (best_threshold, best_f1)
+    return cat_ids, optimal_thresholds
 
 
 if __name__ == '__main__':
@@ -157,14 +165,17 @@ if __name__ == '__main__':
     annFile = 'coco-2017/raw/instances_val2017.json'
     resFile = 'Results/results_coco_queries.json'
 
-   # evaluate(annFile, resFile)
+    evaluate(annFile, resFile, plot_pr = False)
 
+    '''
     # Tune confidence threshold
     thresholds = np.arange(0.1, 1.0, 0.05)
-    f1_scores = tune_confidence_threshold(annFile, resFile, thresholds)
-    print(f"F1 scores for different confidence thresholds: {f1_scores}")
+    cat_ids, optimal_thresholds = tune_confidence_threshold(annFile, resFile, thresholds)
 
+    print("Categories evaluated: ", cat_ids)
+    print("Optimal thresholds and F1 scores: ", optimal_thresholds)
 
+    '''
 
 
     # MANAGE IOU THRESHOLD in F1 SCORE CALCULATION
