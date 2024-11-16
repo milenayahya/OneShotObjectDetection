@@ -27,10 +27,13 @@ if __name__ == "__main__":
         dataset_val_coco = fo.Dataset.from_dir(
             dataset_type=fo.types.COCODetectionDataset,
             data_path=data_dir,
+            label_field="ground_truth",
             labels_path=labels_path,
-            include_id=True,
+            label_types = "detections",
             name=dataset_name,
         )
+
+    print("Dataset: ", dataset_val_coco)
 
     for img_id, data in predictions.items():
         img_filename = map_coco_filenames(mapping, img_id)

@@ -125,14 +125,14 @@ if __name__ == "__main__":
     options_1s = RunOptions(
         mode="test",
         source_image_paths= os.path.join(query_dir, "coco_query_objects_filtered/1_shot/"),
-        target_image_paths=os.path.join(test_dir, "coco_val_subset/"),
-        comment="coco_queries", 
+        target_image_paths= "coco-2017/validation/data/",
+        comment="coco_validation", 
         query_batch_size=8, 
         test_batch_size=8, 
-        confidence_threshold=0.7,
-        topk_test=20,
+        confidence_threshold=0.09,
+        topk_test=170,
         k_shot=1,
-        visualize_test_images=True,
+        visualize_test_images=False,
         nms_threshold=0.3
     )
 
@@ -154,9 +154,9 @@ if __name__ == "__main__":
 
     torch.save(query_embeddings, f"Queries/query_embeddings_{options_1s.comment}_gpu.pth")
 
-   
-    file = os.path.join(query_dir, f"classes_{options_1s.comment}.json")    
-    query_embeddings = torch.load(f"Queries/query_embeddings_{options_1s.comment}_gpu.pth")
+    '''
+    file = os.path.join(query_dir, f"classes_coco_queries.json")    
+    query_embeddings = torch.load(f"Queries/query_embeddings_coco_queries_gpu.pth")
     classes = json.load(open(file, 'r'))
 
     coco_results = one_shot_detection_batches(
@@ -168,11 +168,10 @@ if __name__ == "__main__":
             writer,
             per_image= False
         ) 
-    '''
+    
     result_file = os.path.join(results_dir, f"results_{options_1s.comment}.json")
-    visualize_results(result_file, writer, per_image=False, args=options_1s, random_selection=False)
-    
-    
+    #visualize_results(result_file, writer, per_image=False, args=options_1s, random_selection=True)
+
     writer.close()  
 
    # run_all_tasks()
