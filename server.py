@@ -7,7 +7,8 @@ import torch
 import json
 import os
 import struct
-from osod import zero_shot_detection, one_shot_detection_batches, find_query_patches_batches, visualize_test_images
+from osod import zero_shot_detection, one_shot_detection_batches, find_query_patches_batches, visualize_results
+from config import query_dir, test_dir, results_dir
 
 def receive_all(connection, size):
     data = b''
@@ -72,6 +73,7 @@ def send_predictions(connection, predictions):
 
 dir = "received_images/"
 options = RunOptions.from_json("params.json")
+options.target_image_paths = dir
 writer = SummaryWriter(comment=options.comment)
 model = options.model.from_pretrained(options.backbone)
 processor = options.processor.from_pretrained(options.backbone)
@@ -97,12 +99,13 @@ if __name__ == "__main__":
     #zero_shot()
 
     
-    with open("classes_imageNet.json", 'r') as f:
+    file = os.path.join(query_dir, f"classes_{options.data}.json")
+    with open(file, 'r') as f:
         classes = json.load(f)
 
     # Load the list of tensors onto the GPU
-    query_embeddings = torch.load('query_embeddings_imageNet_gpu.pth', map_location='cuda')
-
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.data}_gpu.pth', map_location='cuda')
+    
 
     counter = 0
     initial_batch_processed = False
@@ -134,7 +137,7 @@ if __name__ == "__main__":
                 options.target_image_paths = path
                 
                 # Perform one-shot detection for new images
-                _, predictions, target_pixel_values= one_shot_detection_batches(
+                id, predictions= one_shot_detection_batches(
                     model,
                     processor,
                     query_embeddings,
@@ -143,13 +146,16 @@ if __name__ == "__main__":
                     writer,
                     per_image=True
                 )
+
+                
                 # Send predictions back to the client
                 send_predictions(connection, predictions)
 
                 if options.visualize_test_images:
-                    im = path.split('/')[-1].split('.')[0]
-                    visualize_test_images(f"results_{im}_plotting.json", writer, target_pixel_values, per_image=True)
+                    filepath = os.path.join(results_dir, f"results_{id}.json")
+                    visualize_results(filepath, writer, per_image=True, args=options, random_selection=None)
                 
+              
                 print(f'Sent predictions for {filename}')
 
 

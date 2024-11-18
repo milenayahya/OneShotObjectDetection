@@ -17,6 +17,7 @@ import logging
 from tqdm import tqdm
 from RunOptions import RunOptions
 from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+#from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
 from config import PROJECT_BASE_PATH, query_dir, results_dir, test_dir
 from torchvision.ops import batched_nms
 import tensorflow as tf
@@ -71,7 +72,7 @@ ID2CLASS = {1: "squirrel", 2: "nail", 3: "pin"}
 CLASS2ID = {v: k for k, v in ID2CLASS.items()}
 '''
 
-def nms_batched(boxes, scores, classes, im_indices, batch, threshold, dir, per_image):
+def nms_batched(boxes, scores, classes, im_indices, args):
     
     '''
     Perform non-maximum suppression on a batch of bounding boxes.
@@ -79,7 +80,12 @@ def nms_batched(boxes, scores, classes, im_indices, batch, threshold, dir, per_i
     Returns the boxes in COCO format (x, y, width, height) for evaluation.
 
     '''
-    indices = batched_nms(boxes, scores, classes, threshold)
+    if args.nms_between_classes:
+        classes_nms = torch.zeros_like(classes)
+    else:
+        classes_nms = classes
+
+    indices = batched_nms(boxes, scores, classes_nms, args.nms_threshold)
     filtered_boxes = boxes[indices]
     filtered_scores = scores[indices]
     filtered_classes = classes[indices]
@@ -121,7 +127,8 @@ def load_query_image_group(image_dir: str, k=None) -> List[Tuple[np.ndarray, str
     images = []
     for image_name in os.listdir(image_dir):
         if image_name.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
-            category = ID2CLASS[int(image_name.split("_")[0])]
+           # category = ID2CLASS[int(image_name.split("_")[0])]
+            category = ID2CLASS[float(image_name.split("_")[0])]
             #Taking only k query images to perfrom k shot detection
             k_hat = image_name.split("_")[-1].split(".")[0]
             if k is not None and int(k_hat) > k:         
@@ -242,7 +249,7 @@ def zero_shot_detection(
 
     logger.info(f"Performing zero-shot detection on the query images.")
     total_batches = (len(images) + args.query_batch_size - 1) // args.query_batch_size
-    all_data = []
+  
     with tqdm(total=total_batches, desc="Processing query batches") as pbar:
         for batch_start in range(0, len(images), args.query_batch_size):
     
@@ -263,9 +270,7 @@ def zero_shot_detection(
                 source_boxes = model.box_predictor(image_features, feature_map=feature_map)
                 source_class_embedding = model.class_predictor(image_features)[1]
                 source_class_embeddings.append(source_class_embedding)
-            
-           
-
+   
             if args.visualize_query_images:
                 visualize_objectnesses_batch(
                     image_batch, source_boxes.cpu(), source_pixel_values.cpu(), objectnesses.cpu(), args.topk_query, batch_start, args.query_batch_size, classes, all_data, writer
@@ -302,6 +307,23 @@ def zero_shot_detection(
         logger.info("Finished extracting the query embeddings")
         writer.flush()
         logger.info("Zero-shot detection completed")
+
+        if args.topk_query > 1:
+            class_embeddings_dict = {}
+
+            # Group queries of same class together
+            for embedding, class_label in zip(query_embeddings, classes):
+                if class_label not in class_embeddings_dict:
+                    class_embeddings_dict[class_label] = []
+                class_embeddings_dict[class_label].append(embedding)
+            
+            query_embeddings = []
+            classes = []
+            for class_label, embeddings in class_embeddings_dict.items():
+                average_embedding = torch.mean(torch.stack(embeddings), dim=0)
+                query_embeddings.append(average_embedding)
+                classes.append(class_label)
+
         return indexes, query_embeddings, classes
 
     logger.info("Zero-shot detection completed")
@@ -432,15 +454,37 @@ def visualize_test_images(filepath, writer, target_pixel_values, per_image, rand
             ax.set_ylim(1, 0)
         writer.add_figure(f"Test_Image_with_prediction_boxes/image_{image_id}", fig)
 
-def visualize_results(filepath, writer, per_image, args, random_selection=False):
+def visualize_results(filepath, writer, per_image, args, random_selection=None):
+    """
+    Visualize the test images with the predicted bounding boxes and confidence scores.
+    Boxes have to be in x, y, w, h format (not normalized).
+    Random_selection is used to randomly select x% of the images for visualization.
+    
+    """
 
     image_data = read_results(filepath, random_selection)
     dir = args.target_image_paths
+    if per_image:   
+        dir = dir.split("/")[0]
     for image_id, data in image_data.items():
+        if image_id.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
+            image_id = image_id.split(".")[0]
         for filename in os.listdir(dir):
             filename = filename.split(".")[0]
+            print("Filename:", filename)
             if filename.endswith(str(image_id)):
-                image_path = os.path.join(dir, filename + ".jpg")
+                print("Visualizing image:", filename)
+                if args.data == "COCO":
+                    image_path = os.path.join(dir, filename + ".jpg")
+                if args.data == "MGN":
+                    image_path = os.path.join(dir, filename + ".png")
+                if args.data == "TestData":
+                    image_path = os.path.join(dir, filename + ".jpg")
+                if args.data == "ImageNet":
+                    image_path = os.path.join(dir, filename + ".JPEG")
+                if per_image:   
+                    image_path = os.path.join(dir, filename + ".jpg")
+                    
                 image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB) 
                 fig, ax = plt.subplots()
                 plt.imshow(image)  
@@ -591,19 +635,24 @@ def one_shot_detection_batches(
 
             #NMS only on same class
             nms_boxes_coco, nms_scores, nms_classes, nms_image_indices = nms_batched(
-                flattened_boxes, flattened_scores, flattened_classes, flattened_image_indices, batch_start, args.nms_threshold, args.target_image_paths, per_image
+                flattened_boxes, flattened_scores, flattened_classes, flattened_image_indices, args
                 )  
 
             # Collect results in COCO format
             for idx, (box, score, cls, img_idx) in enumerate(zip(nms_boxes_coco, nms_scores, nms_classes, nms_image_indices)):
-                if per_image:
-                    im_id = args.target_image_paths
-                else:
-                    im_id = img_idx.item() + batch_start
+                
                 rounded_box = [round(coord, 2) for coord in box.tolist()]
+                if per_image:
+                    img_id = args.target_image_paths.split("/")[-1].split(".")[0]
+                elif args.data == "COCO":
+                    img_id = map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start))
+                elif args.data == "MGN":
+                    img_id = get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start)
+                else:
+                    img_id = img_idx.item() + batch_start
+
                 coco_results.append({
-                    "image_id": map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item()+ batch_start)),
-                   # "image_id": im_id,
+                    "image_id": img_id,
                     "category_id": cls.item(),
                     "bbox": rounded_box,
                     "score": round(score.item(), 2)
@@ -614,8 +663,8 @@ def one_shot_detection_batches(
         # Periodically save results to file every 30 batches
         # TO DO: make the number of batches to save results to file a parameter
         batch_index = batch_start // args.test_batch_size + 1
-        if batch_index % 40 == 0:
-            save_results(coco_results, args, per_image, im_id)
+        if batch_index % args.write_to_file_freq == 0:
+            save_results(coco_results, args, per_image, img_id)
             #logger.info(f"Saved results of 30 batches to file starting from batch {batch_index - 30} to batch {batch_index}")    
             coco_results.clear()
 
@@ -625,25 +674,32 @@ def one_shot_detection_batches(
     pbar.close()
 
     # Save the remaining results to file
-    save_results(coco_results, args, per_image, im_id)
+    save_results(coco_results, args, per_image, img_id)
 
-    return coco_results
+    if per_image:        
+        return img_id, coco_results
+    else:
+        return coco_results
 
 if __name__ == "__main__":
     
 
     options = RunOptions(
         mode = "test",
-        source_image_paths= os.path.join(query_dir, "coco_query_objects_filtered/1_shot"),
-        target_image_paths= os.path.join(test_dir, "coco_val_subset"), 
-        comment="debug", 
+        source_image_paths= os.path.join(query_dir, "ImageNet_Queries_For_COCO"),
+        target_image_paths= os.path.join(test_dir, "MGN_test"), 
+        data="COCO",
+        comment="ImgNet_for_COCO", 
         query_batch_size=8, 
-        confidence_threshold=0.95,
+        manual_query_selection=False,
+        confidence_threshold=0.96,
         test_batch_size=8, 
         k_shot=1,
-        topk_test= 50,
-        visualize_test_images=True,
-        nms_threshold=0.3
+        topk_test= None,
+        visualize_query_images=True,
+        nms_between_classes=True,
+        nms_threshold=0.3,
+        write_to_file_freq=5,
     )
 
     # Image-Conditioned Object Detection
@@ -678,15 +734,15 @@ if __name__ == "__main__":
         json.dump(classes, f)
 
     # Save the list of GPU tensors to a file
-    torch.save(query_embeddings, f'query_embeddings_{options.comment}_gpu.pth')
+    torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
 
-
-    file = os.path.join(query_dir, f"classes_{options.comment}.json")
+    '''
+    file = os.path.join(query_dir, f"classes_{options.data}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
 
     # Load the list of tensors onto the GPU
-    query_embeddings = torch.load(f'query_embeddings_{options.comment}_gpu.pth', map_location='cuda')
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.data}_gpu.pth', map_location='cuda')
     
     # Detect query objects in test images
     coco_results = one_shot_detection_batches(
@@ -699,6 +755,8 @@ if __name__ == "__main__":
         per_image=False
     )
     
-    filepath = os.path.join(results_dir, "results_{options.comment}.json")
-    visualize_results(filepath, writer, per_image=False, args=options, random_selection=False)
-    
+    filepath = os.path.join(results_dir, f"results_{options.comment}.json")
+    visualize_results(filepath, writer, per_image=False, args=options, random_selection=0.3)
+
+
+'''

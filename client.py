@@ -60,7 +60,6 @@ options = RunOptions.from_json("params.json")
 if __name__ == "__main__":  
     # Create a TCP/IP socket
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    print("options:", options)
     print("options.target_image_paths:", options.target_image_paths)
 
     # Bind the socket to the address given on the command line

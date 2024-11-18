@@ -1,7 +1,8 @@
 {
     "mode": "test",
     "backbone": "google/owlv2-base-patch16-ensemble",
-    "source_image_paths": "Queries/ImageNet_Queries_For_COCO/",
+    "source_image_paths": "Queries/MGN_query_set",
+    "data": "MGN",
     "target_image_paths": "interface/",
     "comment": "interface_test",
     "query_batch_size": 8,
@@ -11,6 +12,7 @@
     "topk_query": 3,
     "confidence_threshold": 0.97,
     "visualize_query_images": true,
-    "nms_threshold": 0.3,
-    "visualize_test_images": true
+    "visualize_test_images": true,
+    "nms_threshold": 0.4,
+    "nms_between_classes": true
 }

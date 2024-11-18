@@ -167,13 +167,13 @@ def get_filename_by_index(dir, index):
 
     return image_filename
 
-def read_results(filepath, random_selection=False):
+def read_results(filepath, random_selection=None):
     """
-    Read results from a JSON file and randomly select 20% of image IDs if random_selection is True.
+    Read results from a JSON file and randomly select x% of image IDs if random_selection is True.
 
     Parameters:
     - filepath: Path to the JSON file.
-    - random_selection: Boolean flag to indicate whether to randomly select 20% of image IDs.
+    - random_selection: float which represents the percentage of image IDs to randomly select.
 
     Returns:
     - A dictionary with image data.
@@ -183,15 +183,15 @@ def read_results(filepath, random_selection=False):
 
     image_data = defaultdict(lambda: {'bboxes': [], 'scores': [], 'categories': []})
 
-    if random_selection:
+    if random_selection is not None:
         all_image_ids = list(set(result['image_id'] for result in results))
-        selected_image_ids = random.sample(all_image_ids, int(len(all_image_ids) * 0.2))
+        selected_image_ids = random.sample(all_image_ids, int(len(all_image_ids) * random_selection))
     else:
         selected_image_ids = None
 
     for result in results:
         image_id = result['image_id']
-        if not random_selection or image_id in selected_image_ids:
+        if random_selection is None or image_id in selected_image_ids:
             image_data[image_id]['bboxes'].append(result['bbox'])
             image_data[image_id]['scores'].append(result['score'])
             image_data[image_id]['categories'].append(result['category_id'])
@@ -243,8 +243,7 @@ def save_results(coco_results, options, per_image, im_id):
     """
 
     if per_image:
-        id = im_id.split("/")[-1].split(".")[0]
-        file = os.path.join(results_dir, f"results_{id}.json")
+        file = os.path.join(results_dir, f"results_{im_id}.json")
         with open(file, "w") as f:
             for result in coco_results:
                 f.write(json.dumps(result) + '\n')
@@ -253,6 +252,7 @@ def save_results(coco_results, options, per_image, im_id):
         with open(file, "a") as f:
             for result in coco_results:
                 f.write(json.dumps(result) + '\n')
+    
 
 
 

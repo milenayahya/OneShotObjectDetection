@@ -8,6 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 class RunOptions:
     def __init__(self, 
                  mode: Literal["test", "validation"],
+                 data: Literal["ImageNet", "COCO", "MGN", "TestData"],
                  source_image_paths: str,
                  target_image_paths: str,
                  model = Owlv2ForObjectDetection,
@@ -22,11 +23,13 @@ class RunOptions:
                  manual_query_selection: bool = False,
                  confidence_threshold: float = 0.96,
                  visualize_query_images: bool = True,
-                 visualize_test_images: bool = True,
-                 nms_between_classes: bool = True,
-                 nms_threshold: float = 0.3):
+                 visualize_test_images: bool = False,
+                 nms_between_classes: bool = False,
+                 nms_threshold: float = 0.3,
+                 write_to_file_freq: int = 40):
         self.mode = mode
         self.model = model  
+        self.data = data
         self.processor = processor 
         self.backbone = backbone
         self.source_image_paths = source_image_paths
@@ -43,6 +46,7 @@ class RunOptions:
         self.visualize_test_images = visualize_test_images
         self.nms_between_classes = nms_between_classes
         self.nms_threshold = nms_threshold
+        self.write_to_file_freq = write_to_file_freq
 
     @classmethod
     def from_args(cls, args):
@@ -52,6 +56,7 @@ class RunOptions:
             model = args.model,
             processor = args.processor,
             backbone=args.backbone,
+            data = args.data,
             source_image_paths=args.source_image_paths,
             target_image_paths=args.target_image_paths,
             comment=args.comment,
@@ -66,6 +71,7 @@ class RunOptions:
             visualize_test_images=args.visualize_test_images,
             nms_between_classes=args.nms_between_classes,
             nms_threshold=args.nms_threshold,
+            write_to_file_freq=args.write_to_file_freq
         )
         
     @classmethod
@@ -80,6 +86,7 @@ class RunOptions:
             source_image_paths=params["source_image_paths"],
             target_image_paths=params["target_image_paths"],
             comment=params["comment"],
+            data = params["data"],
             query_batch_size=params["query_batch_size"],
             test_batch_size=params["test_batch_size"],
             topk_query=params["topk_query"],
@@ -88,7 +95,7 @@ class RunOptions:
             confidence_threshold=params["confidence_threshold"],
             visualize_query_images=params["visualize_query_images"],
             visualize_test_images=params["visualize_test_images"],
-            nms_threshold=params["nms_threshold"]
+            nms_threshold=params["nms_threshold"],
         )
 
 def parse_args():
@@ -97,6 +104,8 @@ def parse_args():
                         help="The backbone model to use.")
     parser.add_argument("--mode", type=str, default="test",
                         help="Mode of operation: test or validation.")
+    parser.add_argument("--data", type=str, default="TestData",
+                        help="Data used: ImageNet, COCO, MGN, or TestData.")
     parser.add_argument("--source_image_paths", type=str, default="Queries/query_images/",
                         help="Path to source images for querying.")
     parser.add_argument("--target_image_paths", type=str, default="Test/test_images/",
@@ -125,6 +134,8 @@ def parse_args():
                         help="Apply non-maximum suppression between classes.")
     parser.add_argument("--nms_threshold", type=float, default=0.3,
                         help="Threshold for non-maximum suppression.")
+    parser.add_argument("--write_to_file_freq", type=int, default=40,
+                        help="Frequency of writing to file measured in batches.")
 
     args = parser.parse_args()
     return args
