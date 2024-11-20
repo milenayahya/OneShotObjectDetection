@@ -21,7 +21,7 @@ from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
 from config import PROJECT_BASE_PATH, query_dir, results_dir, test_dir
 from torchvision.ops import batched_nms
 import tensorflow as tf
-from utils import  get_preprocessed_image, convert_from_x1y1x2y2_to_coco, convert_boxes, create_image_id_mapping, convert_to_cxcywh_format, save_results, get_filename_by_index, map_coco_ids, read_results
+from utils import  get_preprocessed_image, convert_from_x1y1x2y2_to_coco, create_image_id_mapping, save_results, get_filename_by_index, map_coco_ids, read_results
 
 class ModelOutputs:
     def __init__(self, logits, pred_boxes):
@@ -382,98 +382,23 @@ def find_query_patches_batches(
 
     return query_embeddings, classes
 
-
-def visualize_test_images(filepath, writer, target_pixel_values, per_image, random_selection=False):
-    """
-    Visualize the test images with the predicted bounding boxes and confidence scores.
-    Boxes have to be in cx, cy, w, h format (normalized).
-    
-    """
-
-    image_data = read_results(filepath, random_selection)
-
-    if per_image:
-        unnormalized_image = get_preprocessed_image(target_pixel_values.squeeze(0).cpu())
-    
-    else:
-        unnormalized_target_images = []
-        for pixel_value in target_pixel_values.squeeze(0):
-            unnormalized_image = get_preprocessed_image(pixel_value.cpu())
-            unnormalized_target_images.append(unnormalized_image)
-
-    for image_id, data in image_data.items():
- 
-        #image = open_image_by_index(options.target_image_paths, image_id)
-        if per_image:
-            image = unnormalized_image
-        else:
-            image = unnormalized_target_images[image_id]
-        width = image.width
-        height = image.height
-        bboxes = data['bboxes']
-        scores = data['scores']
-        categories = data['categories']
-
-        print("image shape:", width, height)    
-
-        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-        ax.imshow(image, extent=(0, 1, 1, 0))
-       
-        ax.set_axis_off()
-        for i, (box, score, cls) in enumerate(
-                    zip(bboxes, scores, categories)
-            ):
-            
-            cx, cy, w, h = box
-            ax.plot(
-                    [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
-                    [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
-                    color=ID2COLOR[cls], 
-                    alpha=0.5,
-                    linestyle="-"
-            )
-            ax.text(
-                        cx - w / 2 + 0.015,
-                        cy + h / 2 - 0.015,
-                        f"Class: {ID2CLASS[cls]} Score: {score:1.2f}",  # Indicate which query the result is from
-                        ha="left",
-                        va="bottom",
-                        color="black",
-                        bbox={
-                            "facecolor": "white",
-                            "edgecolor": ID2COLOR[
-                                cls
-                            ],  # Use respective color
-                            #"edgecolor": colors[
-                            #    CLASS2ID[cls] - 1
-                            #],  # Use respective color
-                            "boxstyle": "square,pad=.3",
-                        },
-            )
-            ax.set_xlim(0, 1)
-            ax.set_ylim(1, 0)
-        writer.add_figure(f"Test_Image_with_prediction_boxes/image_{image_id}", fig)
-
 def visualize_results(filepath, writer, per_image, args, random_selection=None):
     """
     Visualize the test images with the predicted bounding boxes and confidence scores.
     Boxes have to be in x, y, w, h format (not normalized).
     Random_selection is used to randomly select x% of the images for visualization.
     
-    """
-
+    """ 
     image_data = read_results(filepath, random_selection)
     dir = args.target_image_paths
     if per_image:   
         dir = dir.split("/")[0]
     for image_id, data in image_data.items():
-        if image_id.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
+        if str(image_id).endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
             image_id = image_id.split(".")[0]
         for filename in os.listdir(dir):
             filename = filename.split(".")[0]
-            print("Filename:", filename)
             if filename.endswith(str(image_id)):
-                print("Visualizing image:", filename)
                 if args.data == "COCO":
                     image_path = os.path.join(dir, filename + ".jpg")
                 if args.data == "MGN":
@@ -587,8 +512,17 @@ def one_shot_detection_batches(
                 target_boxes = target_boxes[torch.arange(b)[:, None], top_indices]  
 
             if args.mode == "test":
-                top_indices = (scores > args.confidence_threshold).any(dim=-1)
-            
+                if isinstance(args.confidence_threshold, (int, float)):
+                    top_indices = (scores > args.confidence_threshold).any(dim=-1)
+                else:
+                    idxs = torch.argmax(scores, dim=-1)
+                    # Compare the scores with the corresponding class-specific threshold
+                    predicted_classes = [[classes[idx] for idx in image_idxs] for image_idxs in idxs.tolist()]
+                    thresholds = [[args.confidence_threshold[class_id] for class_id in image_classes] for image_classes in predicted_classes]
+                    thresholds_tensor = torch.tensor(thresholds, device=scores.device)
+                    max_scores = scores[torch.arange(scores.size(0)).unsqueeze(1), torch.arange(scores.size(1)).unsqueeze(0), idxs]
+                    top_indices = (max_scores > thresholds_tensor).to(device) 
+                    
                 filtered_boxes = [target_boxes[i][top_indices[i]] for i in range(b)]
                 filtered_scores = [scores[i][top_indices[i]] for i in range(b)]    
 
@@ -686,16 +620,16 @@ if __name__ == "__main__":
 
     options = RunOptions(
         mode = "test",
-        source_image_paths= os.path.join(query_dir, "ImageNet_Queries_For_COCO"),
+        source_image_paths= os.path.join(query_dir, "MGN_query_set"),
         target_image_paths= os.path.join(test_dir, "MGN_test"), 
-        data="COCO",
-        comment="ImgNet_for_COCO", 
+        data="MGN",
+        comment="MGN_2nd_run", 
         query_batch_size=8, 
         manual_query_selection=False,
         confidence_threshold=0.96,
         test_batch_size=8, 
         k_shot=1,
-        topk_test= None,
+        topk_test= 10,
         visualize_query_images=True,
         nms_between_classes=True,
         nms_threshold=0.3,
@@ -711,7 +645,7 @@ if __name__ == "__main__":
     print(torch.cuda.device_count())
     print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
 
-    
+    '''
     # Find the objects in the query images
     if options.manual_query_selection:
         zero_shot_detection(model, processor, options, writer)
@@ -735,8 +669,8 @@ if __name__ == "__main__":
 
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
-
-    '''
+'''
+    
     file = os.path.join(query_dir, f"classes_{options.data}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
@@ -759,4 +693,3 @@ if __name__ == "__main__":
     visualize_results(filepath, writer, per_image=False, args=options, random_selection=0.3)
 
 
-'''

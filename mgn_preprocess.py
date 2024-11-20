@@ -182,18 +182,17 @@ ID2COLOR = {
 
 
 def print_structure(name, obj):
-    print(name)
+    print("Name is: ",name)
     if isinstance(obj, h5py.Dataset):
         print(f"Dataset content: {obj[:]}")
     elif isinstance(obj, h5py.Group):
         print(f"Group: {name}")
         for sub_name, sub_item in obj.items():
-            print(f"  Sub-item name: {sub_name}")
             if isinstance(sub_item, h5py.Dataset):
-                print(f"  Dataset content: {sub_item[:]}")
+                print(f"  Sub-item name: {sub_name}")
+                print(f" Sub-item is a dataset: {sub_item[:]}")
             elif isinstance(sub_item, h5py.Group):
                 print(f"  Sub-group: {sub_name}")
-
 
 def load_all_images(dir, new_dir):
     if not os.path.exists(new_dir):
@@ -294,7 +293,7 @@ if __name__ == '__main__':
     dir = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real"
     #load_all_images(dir, "MGN_images")
 
-
+    '''
     # Create labels file
     #create_labels_file(dir, "MGN_labels.json")
 
@@ -304,41 +303,42 @@ if __name__ == '__main__':
     create_test_images("MGN/MGN_images", "Test/MGN_test", scenes) 
 
     '''
-    file_path = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real\\data_ifl_0\\mnt\\data1\\data_ifl_real\\scene0\\3_scene.hdf5"
-    
-
+    file_path = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real\\data_ifl_0\\mnt\\data1\\data_ifl_real\\scene1\\3_scene.hdf5"
     #file_path = "C:\\Users\\cm03009\\Downloads\\MetaGraspNet_Real (1)\\MetaGraspNet_Real\\data_ifl_real_0_588.zip\\scene578\\"
+    file_path2 = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real\\data_ifl_0\\mnt\\data1\\data_ifl_real\\scene0\\34.npz"
+    file_path2 = "C:\\Users\\cm03009\\Downloads\\28.npz"
 
-    #
-    # file_path = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real\\data_ifl_0\\mnt\\data1\\data_ifl_real\\scene0\\3.npz"
-
-    with h5py.File(file_path, 'r') as f:
-    # List all groups and datasets in the file
-       
-        f.visititems(print_structure)
-        objects_group = f['objects']
-        for name, item in objects_group.items():
-            print(f"Item name: {name}")
-            if isinstance(item, h5py.Dataset):
-                print(f"Dataset content: {item}")
-
-            elif isinstance(item, h5py.Group):
-                print(f"Group: {name}")
-                for sub_name, sub_item in item.items():
-                    print(f"  Sub-item name: {sub_name}")
-                    if isinstance(sub_item, h5py.Dataset):
-                        print(f"  Dataset content: {sub_item[:]}")
-                    elif isinstance(sub_item, h5py.Group):
-                        print(f"  Sub-group: {sub_name}")
-
-   
-    # Check for 'bboxes_loose' dataset
-    if 'bboxes_loose' in objects_group:
-        bboxes_loose = objects_group['bboxes_loose']
-        print("Bounding Boxes (bboxes_loose):")
-        print(bboxes_loose[:])
-    else:
-        print("No 'bboxes_loose' dataset found in 'objects' group.")
-    
+    file_path = "C:\\Users\\cm03009\\Downloads\\data_ifl_16\\mnt\\data1\\data_ifl_real\\scene800\\17.npz"
+    with np.load(file_path) as data:
+        depth = data['depth']
+        print(f"Depth: {depth}")
+        try:
+            instances_objects = data['instances_objects']
+            print(f"Instances objects: {instances_objects}")
+        except:
+            print(f"WARNING : instances_objects not in file")
+            instances_objects = np.zeros_like(depth)
+        try:
+            instances_semantic = data['instances_semantic']
+            print(f"Instances semantic: {instances_semantic}")
+        except:
+            print(f"WARNING : instances_semantic not in file")
+            instances_semantic = np.zeros_like(depth)
 
     '''
+    with h5py.File(file_path, 'r') as f:
+        f.visititems(print_structure)
+
+    def read_npz(file_path):
+        npz = np.load(file_path)
+        print(f"Contents of {file_path}:")
+        for key in npz.files:
+            print(f"{key}:")
+            print(f"  Data type: {npz[key].dtype}")
+            print(f"  Data shape: {npz[key].shape}")
+            print(npz[key])
+        print("\n")
+
+    read_npz(file_path2)
+    '''
+    

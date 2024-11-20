@@ -63,7 +63,7 @@ def plot_pr_curve(cocoEval, precisions, recall, category_id, cat_id_to_index):
     plt.grid()
     plt.show()
 
-def evaluate(annFile, resFile, plot_pr = False):
+def evaluate(annFile, resFile, plot_pr = False, per_category = False):
     cocoGt=COCO(annFile)
     annotations = load_json_lines(resFile)
 
@@ -86,7 +86,7 @@ def evaluate(annFile, resFile, plot_pr = False):
 
         cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
         cocoEval.params.imgIds = imgIds
-        cocoEval.params.catIds = catIds  # Set to a single category ID
+        cocoEval.params.catIds = catIds  
 
         cocoEval.evaluate()
         cocoEval.accumulate()
@@ -94,6 +94,17 @@ def evaluate(annFile, resFile, plot_pr = False):
 
         precisions = cocoEval.eval['precision'] 
         recalls = cocoEval.params.recThrs
+
+        if per_category:
+            category_ap = {}
+            for i, cat_id in enumerate(catIds):
+                cat_idx = cat_id_to_index[cat_id]
+                category_ap[cat_id] = precisions[:, :, cat_idx, 0, 2].mean() # average over all iou thresholds
+
+            print("\nCategory-wise AP:")
+            for cat_id, ap in category_ap.items():
+                cat_name = cocoGt.loadCats(cat_id)[0]["name"]
+                print(f"Category {cat_id} ({cat_name}): AP = {ap:.4f}")
 
         if plot_pr: 
             for cat_id in catIds:
@@ -179,12 +190,13 @@ def tune_confidence_threshold(annFile, resFile, threshold_range, plot_f1):
 if __name__ == '__main__':
 
     annFile = 'coco-2017/raw/instances_val2017.json'
-    resFile = 'Results/results_coco_queries.json'
-   # resFile = "Results/results_coco_validation.json"
+    resFile = "Results/results_coco_validation.json"   # Results file for the entire validation set
+    #resFile = "Results/results_coco_subset_baseline.json"   # Results file for the subset of the test set
+    #resFile = "Results/results_coco_subset_tuned.json"   # Results file for the subset of the test set
+    #resFile = "Results/results_imgnet_coco_subset.json"   # Results file for the subset of the test set using \5 imgnet queries
 
-    evaluate(annFile, resFile, plot_pr = False)
+    #evaluate(annFile, resFile, plot_pr = False, per_category = True)
 
-    
     # Tune confidence threshold
     thresholds = np.arange(0.1, 1.0, 0.05)
     cat_ids, optimal_thresholds = tune_confidence_threshold(annFile, resFile, thresholds, plot_f1=True)
@@ -194,25 +206,5 @@ if __name__ == '__main__':
 
 
 
-    # MANAGE IOU THRESHOLD in F1 SCORE CALCULATION
-
-
-    '''
-    single_imgId = imgIds[0]
-    # Print predictions for the selected image
-    predictions = [ann for ann in annotations if ann['image_id'] == single_imgId]
-    print("Length of predictions: ", len(predictions))
-
-    print(f"Predictions for Image ID {single_imgId}:")
-    for pred in predictions:
-        print(pred)
-
-    # Print ground truth annotations for the selected image
-    gt_annotations = cocoGt.loadAnns(cocoGt.getAnnIds(imgIds=[single_imgId]))
-    print(f"Ground Truth for Image ID {single_imgId}:")
-    for gt in gt_annotations:
-        print(gt)
-
-    '''
 
     
