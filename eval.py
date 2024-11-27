@@ -227,7 +227,4 @@ if __name__ == '__main__':
     print("Categories evaluated: ", cat_ids)
     print("Optimal thresholds and F1 scores: ", optimal_thresholds)
 
-
-
-
     """

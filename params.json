@@ -1,7 +1,7 @@
 {
     "mode": "test",
     "backbone": "google/owlv2-base-patch16-ensemble",
-    "source_image_paths": "Queries/MGN_query_set",
+    "source_image_paths": "Queries/coco_query_objects_filtered/1_shot",
     "data": "MGN",
     "target_image_paths": "interface/",
     "comment": "interface_test",

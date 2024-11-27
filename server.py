@@ -72,6 +72,9 @@ def send_predictions(connection, predictions):
 
 
 dir = "received_images/"
+if not os.path.exists(dir):
+    os.makedirs(dir)
+    
 options = RunOptions.from_json("params.json")
 options.target_image_paths = dir
 writer = SummaryWriter(comment=options.comment)

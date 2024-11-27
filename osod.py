@@ -16,8 +16,6 @@ import torch.cuda.amp as amp
 import logging
 from tqdm import tqdm
 from RunOptions import RunOptions
-#from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
-from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
 from config import PROJECT_BASE_PATH, query_dir, results_dir, test_dir
 from torchvision.ops import batched_nms
 import tensorflow as tf
@@ -389,8 +387,11 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
     Random_selection is used to randomly select x% of the images for visualization.
     
     """ 
+    if args.data == "COCO":
+        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "MGN":
+        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     image_data = read_results(filepath, random_selection)
-    print("Length of image data:", len(image_data))
     dir = args.target_image_paths
     if per_image:   
         dir = dir.split("/")[0]
@@ -398,8 +399,8 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
         if str(image_id).endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
             image_id = image_id.split(".")[0]
         for filename in os.listdir(dir):
-            if args.data == "MGN":
-                filenamee = filename.split(".")[0].split("_")[0]
+            if args.data == "MGN" and not per_image:
+                filenamee = filename.split("_")[0]
             else:
                 filenamee = filename.split(".")[0]
             file = filename.split(".")[0]
@@ -412,7 +413,7 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
                     image_path = os.path.join(dir, file + ".jpg")
                 if args.data == "ImageNet":
                     image_path = os.path.join(dir, file + ".JPEG")
-                if per_image:   
+                if per_image:
                     image_path = os.path.join(dir, file + ".jpg")
                     
                 image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB) 
@@ -627,9 +628,9 @@ if __name__ == "__main__":
     options = RunOptions(
         mode = "test",
         source_image_paths= os.path.join(query_dir, "MGN_query_set"),
-        target_image_paths= os.path.join(test_dir, "MGN/MGN_test_images"), 
+        target_image_paths= os.path.join(test_dir, "MGN/MGN_subset"), 
         data="MGN",
-        comment="MGN_val_noNMS", 
+        comment="vis_test", 
         query_batch_size=8, 
         manual_query_selection=False,
         confidence_threshold=0.1,
@@ -642,6 +643,7 @@ if __name__ == "__main__":
         write_to_file_freq=5,
     )
 
+
     # Image-Conditioned Object Detection
     writer = SummaryWriter(comment=options.comment)
     model = options.model.from_pretrained(options.backbone)
@@ -652,10 +654,10 @@ if __name__ == "__main__":
     print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
 
     '''
+
     # Find the objects in the query images
     if options.manual_query_selection:
         zero_shot_detection(model, processor, options, writer)
-        #indexes = [1523, 1700, 1465, 1344]
         indexes = [1523, 1641, 1750, 1700, 1700, 747, 1465, 1704, 1214, 1344, 876, 2071]
         query_embeddings, classes = find_query_patches_batches(
             model, processor, options, indexes, writer
@@ -669,13 +671,14 @@ if __name__ == "__main__":
             writer
         )
 
+    
     file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'w') as f:
         json.dump(classes, f)
 
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
-    '''
+    
     
     file = os.path.join(query_dir, f"classes_{options.data}.json")
     with open(file, 'r') as f:
@@ -694,8 +697,8 @@ if __name__ == "__main__":
         writer,
         per_image=False
     )
-    
-    filepath = os.path.join(results_dir, f"results_{options.comment}.json")
-    visualize_results(filepath, writer, per_image=False, args=options, random_selection=0.3)
+    '''
+    filepath = os.path.join(results_dir, f"results_MGN_subset_test_nms_sameClass.json")
+    visualize_results(filepath, writer, per_image=False, args=options, random_selection=0.1)
 
 
