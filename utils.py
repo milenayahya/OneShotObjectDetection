@@ -10,6 +10,7 @@ import tensorflow as tf
 from transformers.utils.constants import OPENAI_CLIP_MEAN, OPENAI_CLIP_STD  
 from typing import Any, Literal, Optional, List, Tuple, Union
 from config import results_dir
+from torchvision.ops import masks_to_boxes
 
 
 def get_preprocessed_image(pixel_values: torch.Tensor) -> Image.Image:
@@ -89,9 +90,14 @@ def convert_from_x1y1x2y2_to_coco(boxes):
         height = y2 - y1
 
         # Ensure the output is on the same device as the input box
-        coco_boxes.append(torch.tensor([x, y, width, height], device=box.device))
+        if isinstance(box, torch.Tensor):
+            device = box.device
+        else:
+            device = torch.device('cpu')
+        coco_boxes.append(torch.tensor([x, y, width, height], device=device))
 
-    coco_boxes = torch.stack(coco_boxes)
+    if len(coco_boxes) > 0:
+        coco_boxes = torch.stack(coco_boxes)
     return coco_boxes
 
 def convert_boxes(cxcywh_boxes, img_indices, batch, dir, per_image):
@@ -184,6 +190,7 @@ def read_results(filepath, random_selection=None):
     image_data = defaultdict(lambda: {'bboxes': [], 'scores': [], 'categories': []})
 
     if random_selection is not None:
+        print(f"Visualizing {len(results)* random_selection} images")
         all_image_ids = list(set(result['image_id'] for result in results))
         selected_image_ids = random.sample(all_image_ids, int(len(all_image_ids) * random_selection))
     else:
@@ -284,3 +291,28 @@ def map_coco_filenames(mapping, img_id):
         if val == img_id:
             return key
     return None
+
+
+def convert_masks_to_boxes(instances_semantic):
+    """
+    Convert instance semantic masks to bounding boxes.
+    Bounding boxes are in x1, y1, x2, y2 format.
+    """
+
+    unique_values = np.unique(instances_semantic)
+    masks = []
+    for mask_id in unique_values:
+        if mask_id == 0:
+            continue
+        mask = (instances_semantic == mask_id).astype(np.uint8)
+        masks.append(mask)
+
+    # Stack the binary masks to create a tensor of shape [N, H, W]
+    if len(masks)>0:
+        masks_tensor = torch.tensor(np.stack(masks, axis=0))
+    else:
+        masks_tensor = torch.tensor([])
+        print("No valid masks found in instances_semantic")
+
+    bboxes = masks_to_boxes(masks_tensor)
+    return bboxes

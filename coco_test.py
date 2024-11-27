@@ -8,7 +8,6 @@ import os
 import random
 import shutil
 from osod import logger
-from coco_preprocess import ID2CLASS
 from config import query_dir, test_dir, results_dir
 
 Tasks = Literal["1_shot_multi_nms", "1_shot_single_nms", "5_shot_multi_nms", "5_shot_single_nms"]
@@ -266,5 +265,3 @@ if __name__ == "__main__":
 
    '''
     
-    thresholds_dict = { ID2CLASS[k]: v for k,v in thresholds.items()}
-    print (thresholds_dict)

@@ -16,6 +16,18 @@ def load_json_lines(file_path):
     with open(file_path, 'r') as f:
         return [json.loads(line) for line in f]
     
+def modify_json_lines(file_path):
+    with open(file_path, 'r') as f:
+        lines = [json.loads(line) for line in f]
+    for line in lines:
+        line['image_id'] = int(line['image_id'].split('.')[0].split("scene")[1])
+    
+    with open("testMGN.json", 'w') as f:
+        for line in lines:
+            json.dump(line, f)
+            f.write('\n')
+    
+    
 def calculate_iou(pred_bbox, gt_bbox):
     
     x1_pred, y1_pred, w_pred, h_pred = pred_bbox
@@ -64,17 +76,20 @@ def plot_pr_curve(cocoEval, precisions, recall, category_id, cat_id_to_index):
     plt.show()
 
 def evaluate(annFile, resFile, plot_pr = False, per_category = False):
+
     cocoGt=COCO(annFile)
     annotations = load_json_lines(resFile)
-
 
     results_img_ids = {ann['image_id'] for ann in annotations}
     results_cat_ids = {ann['category_id'] for ann in annotations}
     gt_img_ids = set(cocoGt.getImgIds())
-   
+    gt_img_ids = {int(img_id) for img_id in gt_img_ids}
+
     # Check if image IDs match
     if not results_img_ids.issubset(gt_img_ids):
         print("Error: Results contain image IDs not present in COCO ground truth.")
+        print("IDs not present in ground truth: ", results_img_ids - gt_img_ids)
+
     else:
         # Initialize COCO detections api
         cocoDt = cocoGt.loadRes(annotations)
@@ -189,14 +204,22 @@ def tune_confidence_threshold(annFile, resFile, threshold_range, plot_f1):
 
 if __name__ == '__main__':
 
-    annFile = 'coco-2017/raw/instances_val2017.json'
-    resFile = "Results/results_coco_validation.json"   # Results file for the entire validation set
+    #annFile = 'coco-2017/raw/instances_val2017.json'
+    annFile = "Test/MGN/MGN_gt_val.json"
+   # resFile = "Results/results_coco_validation.json"   # Results file for the entire validation set
     #resFile = "Results/results_coco_subset_baseline.json"   # Results file for the subset of the test set
     #resFile = "Results/results_coco_subset_tuned.json"   # Results file for the subset of the test set
     #resFile = "Results/results_imgnet_coco_subset.json"   # Results file for the subset of the test set using \5 imgnet queries
+    #resFile = "Results/results_MGN_val.json"   # Results file for MGN
+    #resFile = "Results/results_MGN_subset_test.json"   # Results file for MGN
+    #resFile = "Results/results_MGN_subset_test_nms_sameClass.json"   # Results file for MGN
+    #resFile = "Results/results_MGN_val_noNMS.json"   # Results file for MGN
+    #resFile = "Results/results_MGN.json"   # Results file for MGN
+    resFile = "testMGN.json"
 
-    #evaluate(annFile, resFile, plot_pr = False, per_category = True)
+    evaluate(annFile, resFile, plot_pr = False, per_category = True)
 
+    """
     # Tune confidence threshold
     thresholds = np.arange(0.1, 1.0, 0.05)
     cat_ids, optimal_thresholds = tune_confidence_threshold(annFile, resFile, thresholds, plot_f1=True)
@@ -207,4 +230,4 @@ if __name__ == '__main__':
 
 
 
-    
+    """

@@ -3,6 +3,9 @@ import numpy as np
 import os
 from PIL import Image
 import json
+from utils import convert_from_x1y1x2y2_to_coco, convert_masks_to_boxes
+from matplotlib import pyplot as plt
+import random
 
 CLASS2ID = {
     "cracker_box": 97.0,
@@ -181,6 +184,14 @@ ID2COLOR = {
 }
 
 
+def get_viewpoints(dir):
+    viewpoints = {}   
+    for file in os.listdir(dir):
+        scene = file.split("_")[0]
+        viewpoint = file.split("_")[1].split(".")[0]
+        viewpoints[scene] = viewpoint
+    return viewpoints
+
 def print_structure(name, obj):
     print("Name is: ",name)
     if isinstance(obj, h5py.Dataset):
@@ -207,10 +218,11 @@ def load_all_images(dir, new_dir):
                 for file in os.listdir(scene_path):
                     if file.endswith("rgb.png"):
                         file_path = os.path.join(scene_path, file)
+                        viewpoint = file.split("_")[0]
                         image = Image.open(file_path)
-                        new_path = f"{scene}.png"
+                        new_path = f"{scene}_{viewpoint}.png"
                         image.save(os.path.join(new_dir, new_path))
-                        print(f"Image saved to {os.path.join(new_dir, scene)}")
+                        print(f"Image saved to {os.path.join(new_dir,new_path)}")
                         break
       
 def load_all_labels(dir):
@@ -229,22 +241,71 @@ def load_all_labels(dir):
                             categories_set.update(categoreis)
                             break
     return categories_set
-                 
-def create_labels_file(dir, labels_file):
-    labels= {}
+
+def get_test_scenes(dir):
+    test_scenes= []
+    for file in os.listdir(dir):
+        scene = file.split(".")[0].split("_")[0]
+        test_scenes.append(scene) 
+    return test_scenes
+             
+def create_labels_file(dir, labels_file, test=True):
+    labels = {
+        "images": [],
+        "annotations": [],
+        "categories": []
+    }
+    viewpoints = get_viewpoints("MGN/MGN_images")
+    ann_id = 0
+    if test:
+        test_scenes = get_test_scenes("Test/MGN/MGN_test_images")
     for ifl in range(0,17): 
         path = os.path.join(dir, f"data_ifl_{ifl}", "mnt", "data1", "data_ifl_real")   
         for scene in os.listdir(path):
+            if test and scene not in test_scenes:
+                continue
             scene_path = os.path.join(path, scene)
+            scene_nb  = scene.split("scene")[1]
+            viewpoint = viewpoints[scene]
+            categories = []
+            bboxes = []
             if os.path.isdir(scene_path):
                 for file in os.listdir(scene_path):
-                    if file.endswith("scene.hdf5"):
+                    if file == f"{viewpoint}.npz":
                         file_path = os.path.join(scene_path, file)
-                        with h5py.File(file_path, 'r') as f:
-                            objects_group = f['objects']
-                            categoreis = objects_group['categories']
-                            labels[scene] = categoreis[:].tolist()
+                        with np.load(file_path) as data:
+                            print("processing scene: ", scene)
+                            instances_semantic = data['instances_semantic']
+                            categories = np.unique(instances_semantic)
+                            categories = categories[categories != 0]
+                            bboxes = convert_masks_to_boxes(instances_semantic)
+                            bboxes = convert_from_x1y1x2y2_to_coco(bboxes)
                             break
+            
+            labels["images"].append({
+                "id": scene_nb,
+                "file_name": f"{scene}.png"
+            })
+
+            for cat, box in zip(categories, bboxes):
+                area = float(box[2] * box[3])
+                labels["annotations"].append({
+                    "id": ann_id,
+                    "image_id": int(scene_nb),
+                    "category_id": int(cat),
+                    "bbox": box.tolist(),
+                    "area": area,  # width * height
+                    "iscrowd": 0    
+                })
+                ann_id += 1
+                
+    for cat_name, cat_id in CLASS2ID.items():
+        labels["categories"].append({
+            "id": cat_id,
+            "name": cat_name,
+            "supercategory": "object"
+        })
+
     with open(labels_file, 'w') as f:
         json.dump(labels, f, indent=2)
 
@@ -254,14 +315,15 @@ def get_scenes_with_single_category(labels_file):
     with open(labels_file, 'r') as f:
         labels = json.load(f)
     
-    for scene, categories in labels.items():
-        if len(categories) ==  1:
-            if categories[0] in scene_for_each_category:
-                continue
-            else:
-                scene_for_each_category[categories[0]] = [scene]
+    for ann in labels["annotations"]:
+        category_id = ann["category_id"]
+        scene_id = ann["image_id"]
+        if category_id not in scene_for_each_category:
+            scene_for_each_category[category_id] = [scene_id]
         else:
-            continue
+            scene_for_each_category[category_id].append(scene_id)
+
+    scene_for_each_category = {k: v for k, v in scene_for_each_category.items() if len(v) == 1}
 
     return scene_for_each_category
         
@@ -279,12 +341,27 @@ def create_test_images(source_dir, new_dir, query_scenes):
     if not os.path.exists(new_dir):
         os.makedirs(new_dir)
     for scene in os.listdir(source_dir):
-        scene_name = scene.split(".")[0]
+        scene_name = scene.split(".")[0].split("_")[0]
         if scene_name not in query_scenes:
             scene_path = os.path.join(source_dir, scene)
             im = Image.open(scene_path)
             new_file_path = os.path.join(new_dir, scene)
             im.save(new_file_path)
+
+def create_subset(dir, new_dir):
+    if not os.path.exists(new_dir):
+        os.makedirs(new_dir)
+    imgs = []
+    for file in os.listdir(dir):
+        imgs.append(file)
+    
+    selected_files = random.sample(imgs, 100)
+    for file in selected_files:
+        scene_path = os.path.join(dir, file)
+        im = Image.open(scene_path)
+        new_file_path = os.path.join(new_dir, file)
+        im.save(new_file_path)
+
 
 
 if __name__ == '__main__':
@@ -292,53 +369,51 @@ if __name__ == '__main__':
     # Load all images from the dataset
     dir = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real"
     #load_all_images(dir, "MGN_images")
-
-    '''
-    # Create labels file
-    #create_labels_file(dir, "MGN_labels.json")
-
-   # create_query_set("MGN/MGN_labels.json", "Queries/MGN_query_set", "MGN/MGN_images")
-    scenes = get_scenes_with_single_category("MGN/MGN_labels.json")
-    scenes = [scene for sublist in scenes.values() for scene in sublist]
-    create_test_images("MGN/MGN_images", "Test/MGN_test", scenes) 
-
-    '''
-    file_path = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real\\data_ifl_0\\mnt\\data1\\data_ifl_real\\scene1\\3_scene.hdf5"
-    #file_path = "C:\\Users\\cm03009\\Downloads\\MetaGraspNet_Real (1)\\MetaGraspNet_Real\\data_ifl_real_0_588.zip\\scene578\\"
-    file_path2 = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real\\data_ifl_0\\mnt\\data1\\data_ifl_real\\scene0\\34.npz"
-    file_path2 = "C:\\Users\\cm03009\\Downloads\\28.npz"
-
-    file_path = "C:\\Users\\cm03009\\Downloads\\data_ifl_16\\mnt\\data1\\data_ifl_real\\scene800\\17.npz"
-    with np.load(file_path) as data:
-        depth = data['depth']
-        print(f"Depth: {depth}")
-        try:
-            instances_objects = data['instances_objects']
-            print(f"Instances objects: {instances_objects}")
-        except:
-            print(f"WARNING : instances_objects not in file")
-            instances_objects = np.zeros_like(depth)
-        try:
-            instances_semantic = data['instances_semantic']
-            print(f"Instances semantic: {instances_semantic}")
-        except:
-            print(f"WARNING : instances_semantic not in file")
-            instances_semantic = np.zeros_like(depth)
-
-    '''
-    with h5py.File(file_path, 'r') as f:
-        f.visititems(print_structure)
-
-    def read_npz(file_path):
-        npz = np.load(file_path)
-        print(f"Contents of {file_path}:")
-        for key in npz.files:
-            print(f"{key}:")
-            print(f"  Data type: {npz[key].dtype}")
-            print(f"  Data shape: {npz[key].shape}")
-            print(npz[key])
-        print("\n")
-
-    read_npz(file_path2)
-    '''
     
+    # Create labels file
+    #create_labels_file(dir, "Test/MGN/MGN_gt_val.json", test=True)
+
+    create_subset("MGN/MGN_images", "MGN/MGN_subset")
+
+
+    '''
+    create_query_set("MGN/MGN_labels.json", "Queries/MGN_query_set", "MGN/MGN_images")
+    
+    scenes = get_scenes_with_single_category("MGN/MGN_gt.json")
+    scenes = [scene for sublist in scenes.values() for scene in sublist]
+    
+    create_test_images("MGN/MGN_images", "Test/MGN_test", scenes) 
+    
+    
+    bboxes = [
+    [
+      1001.0,
+      598.0,
+      326.0,
+      298.0
+    ]   ,
+        [
+      732.0,
+      376.0,
+      144.0,
+      177.0
+    ],
+    [
+      1294.0,
+      283.0,
+      273.0,
+      283.0
+    ]
+    ]
+    
+    filepath = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real\\\\data_ifl_1\\mnt\\data1\\data_ifl_real\\scene55\\3.npz"
+    data = np.load(filepath)
+    plt.imshow(data['instances_semantic'])
+    
+    for box in bboxes:
+        x1,y1,w,h = box
+        plt.plot([x1, x1+w, x1+w, x1, x1], [y1, y1, y1+h, y1+h, y1], color='red')
+    
+    plt.show()
+    #print(data['instances_objects'].shape) 
+    '''

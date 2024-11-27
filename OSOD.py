@@ -16,8 +16,8 @@ import torch.cuda.amp as amp
 import logging
 from tqdm import tqdm
 from RunOptions import RunOptions
-from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
-#from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+#from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
 from config import PROJECT_BASE_PATH, query_dir, results_dir, test_dir
 from torchvision.ops import batched_nms
 import tensorflow as tf
@@ -390,6 +390,7 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
     
     """ 
     image_data = read_results(filepath, random_selection)
+    print("Length of image data:", len(image_data))
     dir = args.target_image_paths
     if per_image:   
         dir = dir.split("/")[0]
@@ -397,18 +398,22 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
         if str(image_id).endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
             image_id = image_id.split(".")[0]
         for filename in os.listdir(dir):
-            filename = filename.split(".")[0]
-            if filename.endswith(str(image_id)):
+            if args.data == "MGN":
+                filenamee = filename.split(".")[0].split("_")[0]
+            else:
+                filenamee = filename.split(".")[0]
+            file = filename.split(".")[0]
+            if filenamee.endswith(str(image_id)):
                 if args.data == "COCO":
-                    image_path = os.path.join(dir, filename + ".jpg")
+                    image_path = os.path.join(dir, file + ".jpg")
                 if args.data == "MGN":
-                    image_path = os.path.join(dir, filename + ".png")
+                    image_path = os.path.join(dir, file + ".png")
                 if args.data == "TestData":
-                    image_path = os.path.join(dir, filename + ".jpg")
+                    image_path = os.path.join(dir, file + ".jpg")
                 if args.data == "ImageNet":
-                    image_path = os.path.join(dir, filename + ".JPEG")
+                    image_path = os.path.join(dir, file + ".JPEG")
                 if per_image:   
-                    image_path = os.path.join(dir, filename + ".jpg")
+                    image_path = os.path.join(dir, file + ".jpg")
                     
                 image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB) 
                 fig, ax = plt.subplots()
@@ -582,6 +587,7 @@ def one_shot_detection_batches(
                     img_id = map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start))
                 elif args.data == "MGN":
                     img_id = get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start)
+                    img_id = int(img_id.split(".")[0].split("_")[0].split("scene")[1])
                 else:
                     img_id = img_idx.item() + batch_start
 
@@ -621,17 +627,17 @@ if __name__ == "__main__":
     options = RunOptions(
         mode = "test",
         source_image_paths= os.path.join(query_dir, "MGN_query_set"),
-        target_image_paths= os.path.join(test_dir, "MGN_test"), 
+        target_image_paths= os.path.join(test_dir, "MGN/MGN_test_images"), 
         data="MGN",
-        comment="MGN_2nd_run", 
+        comment="MGN_val_noNMS", 
         query_batch_size=8, 
         manual_query_selection=False,
-        confidence_threshold=0.96,
+        confidence_threshold=0.1,
         test_batch_size=8, 
         k_shot=1,
-        topk_test= 10,
+        topk_test= 170,
         visualize_query_images=True,
-        nms_between_classes=True,
+        nms_between_classes=False,
         nms_threshold=0.3,
         write_to_file_freq=5,
     )
@@ -669,7 +675,7 @@ if __name__ == "__main__":
 
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
-'''
+    '''
     
     file = os.path.join(query_dir, f"classes_{options.data}.json")
     with open(file, 'r') as f:

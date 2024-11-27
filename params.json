@@ -10,6 +10,7 @@
     "k_shot": 1,
     "manual_query_selection": false,
     "topk_query": 3,
+    "topk_test": 20,
     "confidence_threshold": 0.97,
     "visualize_query_images": true,
     "visualize_test_images": true,
