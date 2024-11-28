@@ -112,15 +112,21 @@ def load_image_group(image_dir: str) -> List[np.ndarray]:
         logger.warning("Failed to load test image batch")
     return images
 
-def load_query_image_group(image_dir: str, k=None) -> List[Tuple[np.ndarray, str]]:
+def load_query_image_group(args) -> List[Tuple[np.ndarray, str]]:
     
     '''
-
+    
     Load query images and their categories from a directory.
     Parameters: directory, k (number of query images to load per category)
     Returns: a list of tuples, each containing an image and its category
 
     '''
+    image_dir = args.source_image_paths
+    k = args.k_shot
+    if args.data == "COCO":
+        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "MGN":
+        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     logger.info("Loading query images and categories from directory: %s", image_dir)
     images = []
     for image_name in os.listdir(image_dir):
@@ -143,13 +149,17 @@ def load_query_image_group(image_dir: str, k=None) -> List[Tuple[np.ndarray, str
     return images
 
 def visualize_objectnesses_batch(
-    image_batch, source_boxes, source_pixel_values, objectnesses, topk, batch_start, batch_size, classes, all_data, writer = Optional[SummaryWriter]
+    args, image_batch, source_boxes, source_pixel_values, objectnesses, topk, batch_start, batch_size, classes, all_data, writer = Optional[SummaryWriter]
 ):
     """
 
     Visualize the objectness scores and bounding boxes for a batch of query images. (Zero-Shot Detection Visualization)
 
     """
+    if args.data == "COCO":
+        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "MGN":
+        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     unnormalized_source_images = []
     for pixel_value in source_pixel_values:
         unnormalized_image = get_preprocessed_image(pixel_value)
@@ -229,8 +239,12 @@ def zero_shot_detection(
     Perform zero-shot detection on a batch of query images.
 
     """
+    if args.data == "COCO":
+        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "MGN":
+        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     source_class_embeddings = []
-    images, classes = zip(*load_query_image_group(args.source_image_paths, args.k_shot))
+    images, classes = zip(*load_query_image_group(args))
     images = list(images)
     classes = list(classes)
     classes = [CLASS2ID[class_name] for class_name in classes]
@@ -271,7 +285,7 @@ def zero_shot_detection(
    
             if args.visualize_query_images:
                 visualize_objectnesses_batch(
-                    image_batch, source_boxes.cpu(), source_pixel_values.cpu(), objectnesses.cpu(), args.topk_query, batch_start, args.query_batch_size, classes, all_data, writer
+                   args, image_batch, source_boxes.cpu(), source_pixel_values.cpu(), objectnesses.cpu(), args.topk_query, batch_start, args.query_batch_size, classes, all_data, writer
                 )
 
             if not args.manual_query_selection:
@@ -295,7 +309,7 @@ def zero_shot_detection(
 
             pbar.update(1)
 
-    file = os.path.join(query_dir, f"objectness_indexes_{args.comment}.json")
+    file = os.path.join(query_dir, f"objectness_indexes_{args.data}.json")
     with open(file, 'w') as f:
         json.dump(all_data, f, indent=4)
 
@@ -327,6 +341,26 @@ def zero_shot_detection(
     logger.info("Zero-shot detection completed")
     return None
 
+def modify_max_objectness_indices(file_path, categories, indexes):
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+    
+    max_indices = {}
+    
+    for category_data in data:
+        category = category_data["category"]
+        boxes = category_data["boxes"]
+        
+        # Find the box with the maximum objectness
+        max_box = max(boxes, key=lambda x: x["objectness"])
+        max_indices[category] = max_box["index"]
+    
+    for cat, idx in zip(categories, indexes):
+        if cat in max_indices:
+            max_indices[cat] = idx
+    
+    return max_indices
+
 def find_query_patches_batches( 
     model: Owlv2ForObjectDetection, 
     processor: Owlv2Processor, 
@@ -340,7 +374,7 @@ def find_query_patches_batches(
 
     """
     query_embeddings = []
-    images, classes = zip(*load_query_image_group(args.source_image_paths))
+    images, classes = zip(*load_query_image_group(args))
     images = list(images)
     classes = list(classes)
 
@@ -370,13 +404,9 @@ def find_query_patches_batches(
 
             # Extract the query embedding for the current image based on the given index
             query_embedding = current_class_embedding[indexes[batch_start + i]]
-            query_embeddings.append(query_embedding)
+            query_embeddings.append(torch.tensor(query_embedding))
 
-        writer.add_text("indexes of query objects", str(indexes))
-        writer.add_text("classes of query objects", str(classes))
         writer.flush()
-        np.save("query_embeddings.npy", query_embeddings)
-        np.save("classes.npy", classes)
 
     return query_embeddings, classes
 
@@ -465,7 +495,10 @@ def one_shot_detection_batches(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     print(f"Using device: {device}")
-
+    if args.data == "COCO":
+        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "MGN":
+        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     if per_image:
         logger.info("Loading image")
         if args.target_image_paths.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
@@ -545,7 +578,10 @@ def one_shot_detection_batches(
                     padded_scores[i, :num_boxes] = filtered_scores[i].max(dim=1)[0]
                     
                     max_scores, max_indexes = torch.max(filtered_scores[i], dim=1)
-                    class_ids = torch.tensor([classes[idx] for idx in max_indexes.tolist()]).to(device)
+                    if args.data == "MGN":
+                        class_ids = torch.tensor([CLASS2ID[classes[idx]] for idx in max_indexes.tolist()]).to(device)
+                    else:
+                        class_ids = torch.tensor([classes[idx] for idx in max_indexes.tolist()]).to(device)
                     padded_classes[i, :num_boxes] = class_ids  # Update padded_classes correctly
                     image_indices[i, :num_boxes] = i  # Assign the current batch index to each box
 
@@ -630,15 +666,15 @@ if __name__ == "__main__":
         source_image_paths= os.path.join(query_dir, "MGN_query_set"),
         target_image_paths= os.path.join(test_dir, "MGN/MGN_subset"), 
         data="MGN",
-        comment="vis_test", 
+        comment="MGN_queries_new", 
         query_batch_size=8, 
-        manual_query_selection=False,
+        manual_query_selection=True,
         confidence_threshold=0.1,
         test_batch_size=8, 
         k_shot=1,
-        topk_test= 170,
+        topk_test= 35,
         visualize_query_images=True,
-        nms_between_classes=False,
+        nms_between_classes=True,
         nms_threshold=0.3,
         write_to_file_freq=5,
     )
@@ -653,12 +689,18 @@ if __name__ == "__main__":
     print(torch.cuda.device_count())
     print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
 
-    '''
-
     # Find the objects in the query images
     if options.manual_query_selection:
         zero_shot_detection(model, processor, options, writer)
-        indexes = [1523, 1641, 1750, 1700, 1700, 747, 1465, 1704, 1214, 1344, 876, 2071]
+
+        categories = ["cat_milk", "coffeefilter", "potted_meat_can", "lipcare"]
+        idx = [1743, 1216, 1700, 1460]
+
+        indexes = modify_max_objectness_indices(
+            os.path.join(query_dir, f"objectness_indexes_{options.data}.json"), 
+            categories, 
+            idx)
+        indexes = [v for k, v in indexes.items()]
         query_embeddings, classes = find_query_patches_batches(
             model, processor, options, indexes, writer
         )
@@ -672,14 +714,14 @@ if __name__ == "__main__":
         )
 
     
-    file = os.path.join(query_dir, f"classes_{options.comment}.json")
+    file = os.path.join(query_dir, f"classes_{options.data}.json")
     with open(file, 'w') as f:
         json.dump(classes, f)
 
     # Save the list of GPU tensors to a file
-    torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
-    
-    
+    torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.data}_gpu.pth'))
+   
+    '''
     file = os.path.join(query_dir, f"classes_{options.data}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
@@ -697,8 +739,8 @@ if __name__ == "__main__":
         writer,
         per_image=False
     )
+    
+    filepath = os.path.join(results_dir, f"results_{options.comment}.json")
+    visualize_results(filepath, writer, per_image=False, args=options, random_selection=0.3)
     '''
-    filepath = os.path.join(results_dir, f"results_MGN_subset_test_nms_sameClass.json")
-    visualize_results(filepath, writer, per_image=False, args=options, random_selection=0.1)
-
 

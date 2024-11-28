@@ -190,7 +190,6 @@ def read_results(filepath, random_selection=None):
     image_data = defaultdict(lambda: {'bboxes': [], 'scores': [], 'categories': []})
 
     if random_selection is not None:
-        print(f"Visualizing {len(results)* random_selection} images")
         all_image_ids = list(set(result['image_id'] for result in results))
         selected_image_ids = random.sample(all_image_ids, int(len(all_image_ids) * random_selection))
     else:

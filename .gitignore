@@ -2,7 +2,7 @@ logs/
 runs/
 coco-2017/
 testenv/
-interface/
+Test_Images/
 received_images/
 Test/
 Queries/

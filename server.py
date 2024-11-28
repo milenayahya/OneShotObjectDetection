@@ -153,12 +153,12 @@ if __name__ == "__main__":
                 
                 # Send predictions back to the client
                 send_predictions(connection, predictions)
-
+                writer.add_text("Predictions", json.dumps(predictions))
                 if options.visualize_test_images:
                     filepath = os.path.join(results_dir, f"results_{id}.json")
                     visualize_results(filepath, writer, per_image=True, args=options, random_selection=None)
                 
-              
+                
                 print(f'Sent predictions for {filename}')
 
 

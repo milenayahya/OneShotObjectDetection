@@ -90,12 +90,14 @@ class RunOptions:
             query_batch_size=params["query_batch_size"],
             test_batch_size=params["test_batch_size"],
             topk_query=params["topk_query"],
+            topk_test=params["topk_test"],
             k_shot=params["k_shot"],
             manual_query_selection=params["manual_query_selection"],
             confidence_threshold=params["confidence_threshold"],
             visualize_query_images=params["visualize_query_images"],
             visualize_test_images=params["visualize_test_images"],
             nms_threshold=params["nms_threshold"],
+            nms_between_classes=params["nms_between_classes"],
         )
 
 def parse_args():

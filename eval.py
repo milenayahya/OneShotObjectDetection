@@ -9,7 +9,8 @@ from torchvision.ops import nms
 import torch
 from torch.utils.tensorboard import SummaryWriter  
 import matplotlib.pyplot as plt 
-from coco_preprocess import ID2CLASS
+#from coco_preprocess import ID2CLASS
+from mgn_preprocess import ID2CLASS
 pylab.rcParams['figure.figsize'] = (10.0, 8.0)
 
 def load_json_lines(file_path):
@@ -124,6 +125,8 @@ def evaluate(annFile, resFile, plot_pr = False, per_category = False):
         if plot_pr: 
             for cat_id in catIds:
                 plot_pr_curve(cocoEval, precisions, recalls, cat_id, cat_id_to_index)
+        if per_category:
+            return category_ap
 
 def tune_confidence_threshold(annFile, resFile, threshold_range, plot_f1):
     cocoGt = COCO(annFile)
@@ -215,10 +218,16 @@ if __name__ == '__main__':
     #resFile = "Results/results_MGN_subset_test_nms_sameClass.json"   # Results file for MGN
     #resFile = "Results/results_MGN_val_noNMS.json"   # Results file for MGN
     #resFile = "Results/results_MGN.json"   # Results file for MGN
-    resFile = "testMGN.json"
+    #resFile = "testMGN.json"
+    resFile = "Results/results_MGN_val_again.json"
 
-    evaluate(annFile, resFile, plot_pr = False, per_category = True)
+    cat_ap = evaluate(annFile, resFile, plot_pr = False, per_category = True)
 
+    print("\nCategories with AP < 0.1:")
+    for cat_id, ap in cat_ap.items():
+        if ap < 0.1:
+            print(f"Category {cat_id} ({ID2CLASS[cat_id]}): AP = {ap:.4f}")
+    print(f"{len([ap for ap in cat_ap.values() if ap < 0.1])} categories have AP < 0.1")
     """
     # Tune confidence threshold
     thresholds = np.arange(0.1, 1.0, 0.05)

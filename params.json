@@ -1,9 +1,9 @@
 {
     "mode": "test",
     "backbone": "google/owlv2-base-patch16-ensemble",
-    "source_image_paths": "Queries/coco_query_objects_filtered/1_shot",
+    "source_image_paths": "Queries/MGN_query_set",
     "data": "MGN",
-    "target_image_paths": "interface/",
+    "target_image_paths": "Test_Images/",
     "comment": "interface_test",
     "query_batch_size": 8,
     "test_batch_size": 8,
@@ -11,9 +11,9 @@
     "manual_query_selection": false,
     "topk_query": 3,
     "topk_test": 20,
-    "confidence_threshold": 0.97,
+    "confidence_threshold": 0.95,
     "visualize_query_images": true,
     "visualize_test_images": true,
-    "nms_threshold": 0.4,
+    "nms_threshold": 0.3,
     "nms_between_classes": true
 }
