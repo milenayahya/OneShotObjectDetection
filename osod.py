@@ -149,7 +149,7 @@ def load_query_image_group(args) -> List[Tuple[np.ndarray, str]]:
     return images
 
 def visualize_objectnesses_batch(
-    args, image_batch, source_boxes, source_pixel_values, objectnesses, topk, batch_start, batch_size, classes, all_data, writer = Optional[SummaryWriter]
+    args, image_batch, source_boxes, source_pixel_values, objectnesses, batch_start, classes, all_data, writer = Optional[SummaryWriter]
 ):
     """
 
@@ -182,7 +182,7 @@ def visualize_objectnesses_batch(
         current_objectnesses = torch.sigmoid(objectnesses[idx].detach()).numpy()
         current_boxes = source_boxes[idx].detach().numpy()
 
-        top_k = topk
+        top_k = args.topk_query 
         objectness_threshold = np.partition(current_objectnesses, -top_k)[-top_k]
         # print(objectness_threshold)
 
@@ -222,9 +222,60 @@ def visualize_objectnesses_batch(
             )
         all_data.append(data)
         ax.set_ylim(1, 0)
-        ax.set_title(f"Zero-Shot on {ID2CLASS[category]}: Top {topk} objects by objectness,")
+        ax.set_title(f"Zero-Shot on {ID2CLASS[category]}: Top {top_k} objects by objectness,")
         # Add image with bounding boxes to the writer
-        writer.add_figure(f"Query_Images_with_boxes/image_{idx}_batch{batch_start//batch_size}", fig, global_step= batch_start+idx+1)
+        writer.add_figure(f"Query_Images_with_boxes/image_{idx}_batch{batch_start//args.query_batch_size}", fig, global_step= batch_start+idx+1)
+        writer.flush()
+ 
+def visualize_queries(image_batch, indexes, source_boxes, source_pixel_values, batch_start, classes, args, writer):
+    """
+    Visualize the query embeddings for the selected objects in the query images.
+    """
+    if args.data == "COCO":
+        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "MGN":
+        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    unnormalized_source_images = []
+    for pixel_value in source_pixel_values:
+        unnormalized_image = get_preprocessed_image(pixel_value)
+        unnormalized_source_images.append(unnormalized_image)   
+
+    for idx, image in enumerate(image_batch):
+        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
+        ax.imshow(unnormalized_source_images[idx], extent=(0, 1, 1, 0))
+        ax.set_axis_off()
+
+        image_idx = batch_start + idx 
+        category = classes[image_idx]
+        box = source_boxes[idx][indexes[image_idx]].detach().numpy()
+        cx, cy, w, h = box
+        ax.plot(
+            [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
+            [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
+            color="lime",
+        )
+
+        # print("Index:", i)
+        # print("Objectness:", objectness)
+
+        # Add text for objectness score
+        ax.text(
+            cx - w / 2 + 0.015,
+            cy + h / 2 - 0.015,
+            f"Index {indexes[idx]}",
+            ha="left",
+            va="bottom",
+            color="black",
+            bbox={
+                "facecolor": "white",
+                "edgecolor": "lime",
+                "boxstyle": "square,pad=.3",
+            },
+        )
+        ax.set_ylim(1, 0)
+        ax.set_title(f"Zero-Shot on {category}")
+        # Add image with bounding boxes to the writer
+        writer.add_figure(f"Query_Images_with_boxes/image_{idx}_batch{batch_start//args.query_batch_size}", fig, global_step= batch_start+idx+1)
         writer.flush()
 
 
@@ -282,12 +333,13 @@ def zero_shot_detection(
                 source_boxes = model.box_predictor(image_features, feature_map=feature_map)
                 source_class_embedding = model.class_predictor(image_features)[1]
                 source_class_embeddings.append(source_class_embedding)
-   
+    
+            
             if args.visualize_query_images:
                 visualize_objectnesses_batch(
-                   args, image_batch, source_boxes.cpu(), source_pixel_values.cpu(), objectnesses.cpu(), args.topk_query, batch_start, args.query_batch_size, classes, all_data, writer
+                   args, image_batch, source_boxes.cpu(), source_pixel_values.cpu(), objectnesses.cpu(), batch_start, classes, all_data, writer
                 )
-
+            
             if not args.manual_query_selection:
             
                 #start_GPUtoCPU.record()
@@ -342,6 +394,7 @@ def zero_shot_detection(
     return None
 
 def modify_max_objectness_indices(file_path, categories, indexes):
+   
     with open(file_path, 'r') as f:
         data = json.load(f)
     
@@ -405,6 +458,10 @@ def find_query_patches_batches(
             # Extract the query embedding for the current image based on the given index
             query_embedding = current_class_embedding[indexes[batch_start + i]]
             query_embeddings.append(torch.tensor(query_embedding))
+
+
+        if args.visualize_query_images:
+            visualize_queries(image_batch, indexes, source_boxes.cpu(), source_pixel_values.cpu(), batch_start, classes, args, writer) 
 
         writer.flush()
 
@@ -666,9 +723,9 @@ if __name__ == "__main__":
         source_image_paths= os.path.join(query_dir, "MGN_query_set"),
         target_image_paths= os.path.join(test_dir, "MGN/MGN_subset"), 
         data="MGN",
-        comment="MGN_queries_new", 
+        comment="MGN_queries_manual", 
         query_batch_size=8, 
-        manual_query_selection=True,
+        manual_query_selection=False,
         confidence_threshold=0.1,
         test_batch_size=8, 
         k_shot=1,
@@ -689,6 +746,8 @@ if __name__ == "__main__":
     print(torch.cuda.device_count())
     print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
 
+    
+    
     # Find the objects in the query images
     if options.manual_query_selection:
         zero_shot_detection(model, processor, options, writer)
@@ -701,6 +760,7 @@ if __name__ == "__main__":
             categories, 
             idx)
         indexes = [v for k, v in indexes.items()]
+        print
         query_embeddings, classes = find_query_patches_batches(
             model, processor, options, indexes, writer
         )
@@ -720,8 +780,8 @@ if __name__ == "__main__":
 
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.data}_gpu.pth'))
-   
-    '''
+
+    
     file = os.path.join(query_dir, f"classes_{options.data}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
@@ -742,5 +802,5 @@ if __name__ == "__main__":
     
     filepath = os.path.join(results_dir, f"results_{options.comment}.json")
     visualize_results(filepath, writer, per_image=False, args=options, random_selection=0.3)
-    '''
+    
 
