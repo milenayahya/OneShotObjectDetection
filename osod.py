@@ -127,6 +127,8 @@ def load_query_image_group(args) -> List[Tuple[np.ndarray, str]]:
         from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     elif args.data == "MGN":
         from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "Logos":
+        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     logger.info("Loading query images and categories from directory: %s", image_dir)
     images = []
     for image_name in os.listdir(image_dir):
@@ -160,6 +162,8 @@ def visualize_objectnesses_batch(
         from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     elif args.data == "MGN":
         from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "Logos":
+        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     unnormalized_source_images = []
     for pixel_value in source_pixel_values:
         unnormalized_image = get_preprocessed_image(pixel_value)
@@ -231,10 +235,13 @@ def visualize_queries(image_batch, indexes, source_boxes, source_pixel_values, b
     """
     Visualize the query embeddings for the selected objects in the query images.
     """
+    print("Visualizing query images")
     if args.data == "COCO":
         from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     elif args.data == "MGN":
         from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "Logos":
+        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     unnormalized_source_images = []
     for pixel_value in source_pixel_values:
         unnormalized_image = get_preprocessed_image(pixel_value)
@@ -294,6 +301,8 @@ def zero_shot_detection(
         from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     elif args.data == "MGN":
         from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "Logos":
+        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     source_class_embeddings = []
     images, classes = zip(*load_query_image_group(args))
     images = list(images)
@@ -478,31 +487,23 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
         from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     elif args.data == "MGN":
         from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "Logos":
+        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     image_data = read_results(filepath, random_selection)
     dir = args.target_image_paths
     if per_image:   
         dir = dir.split("/")[0]
     for image_id, data in image_data.items():
-        if str(image_id).endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
-            image_id = image_id.split(".")[0]
         for filename in os.listdir(dir):
+            file = filename.split(".")[0] #remove extension
             if args.data == "MGN" and not per_image:
-                filenamee = filename.split("_")[0]
-            else:
-                filenamee = filename.split(".")[0]
-            file = filename.split(".")[0]
-            if filenamee.endswith(str(image_id)):
-                if args.data == "COCO":
-                    image_path = os.path.join(dir, file + ".jpg")
-                if args.data == "MGN":
-                    image_path = os.path.join(dir, file + ".png")
-                if args.data == "TestData":
-                    image_path = os.path.join(dir, file + ".jpg")
-                if args.data == "ImageNet":
-                    image_path = os.path.join(dir, file + ".JPEG")
-                if per_image:
-                    image_path = os.path.join(dir, file + ".jpg")
-                    
+                file = file.split("_")[0] #remove viewpoint of each scene
+            
+            if (file.endswith(str(image_id)) and (args.data != "MGN" or per_image)) or (args.data == "MGN" and file == f"scene{image_id}"):
+                if per_image: 
+                    image_path = args.target_image_paths
+                else:   
+                    image_path = os.path.join(args.target_image_paths, filename)
                 image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB) 
                 fig, ax = plt.subplots()
                 plt.imshow(image)  
@@ -526,8 +527,7 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
                             #],  # Use respective color
                             "boxstyle": "square",
                         }
-                    )
-                
+                    )                
                 writer.add_figure(f"Test_Image_with_prediction_boxes/image_{image_id}", fig)
                 
 
@@ -556,6 +556,8 @@ def one_shot_detection_batches(
         from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     elif args.data == "MGN":
         from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "Logos":
+        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     if per_image:
         logger.info("Loading image")
         if args.target_image_paths.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
@@ -566,7 +568,8 @@ def one_shot_detection_batches(
 
     coco_results = []
 
-    mapping = create_image_id_mapping('coco-2017/validation/labels.json')
+    if args.data == "COCO":
+        mapping = create_image_id_mapping('coco-2017/validation/labels.json')
     logger.info("Performing Prediction on test images")
     total_batches = (len(images) + args.test_batch_size - 1) // args.test_batch_size
     pbar = tqdm(total=total_batches, desc="Processing test batches")
@@ -603,13 +606,15 @@ def one_shot_detection_batches(
             scores = torch.sigmoid(target_class_predictions)
 
             if args.topk_test is not None:
+                print(f"Leaving only top k boxes {args.topk_test}" )
                 top_indices = torch.argsort(scores[:, :, 0], descending=True)[:, :args.topk_test]
                 scores = scores[torch.arange(b)[:, None], top_indices]
                 target_boxes = target_boxes[torch.arange(b)[:, None], top_indices]  
 
             if args.mode == "test":
+                print(f"Filtering boxes with confidence threshold {args.confidence_threshold}")
                 if isinstance(args.confidence_threshold, (int, float)):
-                    top_indices = (scores > args.confidence_threshold).any(dim=-1)
+                    top_indices = (scores >= args.confidence_threshold).any(dim=-1)
                 else:
                     idxs = torch.argmax(scores, dim=-1)
                     # Compare the scores with the corresponding class-specific threshold
@@ -635,10 +640,7 @@ def one_shot_detection_batches(
                     padded_scores[i, :num_boxes] = filtered_scores[i].max(dim=1)[0]
                     
                     max_scores, max_indexes = torch.max(filtered_scores[i], dim=1)
-                    if args.data == "MGN":
-                        class_ids = torch.tensor([CLASS2ID[classes[idx]] for idx in max_indexes.tolist()]).to(device)
-                    else:
-                        class_ids = torch.tensor([classes[idx] for idx in max_indexes.tolist()]).to(device)
+                    class_ids = torch.tensor([classes[idx] for idx in max_indexes.tolist()]).to(device)
                     padded_classes[i, :num_boxes] = class_ids  # Update padded_classes correctly
                     image_indices[i, :num_boxes] = i  # Assign the current batch index to each box
 
@@ -682,6 +684,9 @@ def one_shot_detection_batches(
                 elif args.data == "MGN":
                     img_id = get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start)
                     img_id = int(img_id.split(".")[0].split("_")[0].split("scene")[1])
+                elif args.data == "Logos":
+                    img_id = get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start)
+                    img_id = img_id.split(".")[0]
                 else:
                     img_id = img_idx.item() + batch_start
 
@@ -717,22 +722,33 @@ def one_shot_detection_batches(
 
 if __name__ == "__main__":
     
+    best_thresholds_MGN = {
+    1: 0.65, 2: 0.5, 3: 0.8, 4: 0.8, 5: 0.1, 6: 0.95, 7: 0.1, 8: 0.95, 
+    11: 0.1, 12: 0.1, 13: 0.85, 14: 0.9, 15: 0.1, 16: 0.1, 17: 0.1, 
+    18: 0.1, 19: 0, 20: 0, 21: 0.85, 22: 0.1, 23: 0.95, 24: 0.1, 
+    25: 0.95, 26: 0.9, 27: 0.95, 28: 0.1, 29: 0.95, 30: 0.1, 31: 0.1, 
+    32: 0.9, 37: 1.0, 38: 0.95, 39: 0.1, 40: 0.9, 41: 0.9, 42: 0.95, 
+    43: 0.1, 44: 0.65, 45: 0.1, 46: 0.1, 47: 0.1, 48: 0, 49: 0.95, 
+    50: 0.95, 51: 0.95, 52: 0.55, 53: 0, 54: 0.1, 56: 0.1, 57: 0.9, 
+    58: 0.95, 59: 0.95, 60: 0.85, 61: 0.1, 62: 0.85, 64: 0, 65: 0.6, 
+    74: 0.9, 75: 0, 87: 0.1, 88: 0.1, 89: 0.95, 93: 0.1, 94: 0.1, 
+    95: 0.1, 96: 0.95, 64: 0.7, 75: 0.7, 48: 0.7, 19: 0.7, 53: 0.7, 20: 0.7}
 
     options = RunOptions(
         mode = "test",
-        source_image_paths= os.path.join(query_dir, "MGN_query_set"),
-        target_image_paths= os.path.join(test_dir, "MGN/MGN_subset"), 
-        data="MGN",
-        comment="MGN_queries_manual", 
+        source_image_paths= os.path.join(query_dir, "MGN_bad"),
+        target_image_paths= os.path.join(test_dir, "coco_val_subset"), 
+        data="COCO",
+        comment="vis_test", 
         query_batch_size=8, 
-        manual_query_selection=False,
-        confidence_threshold=0.1,
+        manual_query_selection=True,
+        confidence_threshold= 0.96,
         test_batch_size=8, 
         k_shot=1,
-        topk_test= 35,
+        topk_test= 10,
         visualize_query_images=True,
         nms_between_classes=True,
-        nms_threshold=0.3,
+        nms_threshold=0.2,
         write_to_file_freq=5,
     )
 
@@ -746,21 +762,19 @@ if __name__ == "__main__":
     print(torch.cuda.device_count())
     print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
 
-    
-    
+    """
     # Find the objects in the query images
     if options.manual_query_selection:
-        zero_shot_detection(model, processor, options, writer)
+       # zero_shot_detection(model, processor, options, writer)
 
-        categories = ["cat_milk", "coffeefilter", "potted_meat_can", "lipcare"]
-        idx = [1743, 1216, 1700, 1460]
+        categories = ["coffeefilter", "cat_milk"]
+        idx = [1216, 1743]
 
         indexes = modify_max_objectness_indices(
             os.path.join(query_dir, f"objectness_indexes_{options.data}.json"), 
             categories, 
             idx)
         indexes = [v for k, v in indexes.items()]
-        print
         query_embeddings, classes = find_query_patches_batches(
             model, processor, options, indexes, writer
         )
@@ -772,22 +786,22 @@ if __name__ == "__main__":
             options,
             writer
         )
-
     
-    file = os.path.join(query_dir, f"classes_{options.data}.json")
+    
+    file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'w') as f:
         json.dump(classes, f)
 
     # Save the list of GPU tensors to a file
-    torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.data}_gpu.pth'))
-
+    torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
     
-    file = os.path.join(query_dir, f"classes_{options.data}.json")
+    
+    file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
 
     # Load the list of tensors onto the GPU
-    query_embeddings = torch.load(f'Queries/query_embeddings_{options.data}_gpu.pth', map_location='cuda')
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location='cuda')
     
     # Detect query objects in test images
     coco_results = one_shot_detection_batches(
@@ -799,8 +813,8 @@ if __name__ == "__main__":
         writer,
         per_image=False
     )
+    """
+    filepath = os.path.join(results_dir, f"results_coco_subset_tuned.json")
+    visualize_results(filepath, writer, per_image=False, args=options, random_selection=0.1)
     
-    filepath = os.path.join(results_dir, f"results_{options.comment}.json")
-    visualize_results(filepath, writer, per_image=False, args=options, random_selection=0.3)
     
-

@@ -154,6 +154,8 @@ def tune_confidence_threshold(annFile, resFile, threshold_range, plot_f1):
             # Check if image IDs match
             if not results_img_ids.issubset(gt_img_ids):
                 print(f"Error: Results contain image IDs not present in COCO ground truth for category {cat_id}.")
+                print("IDs not present in ground truth: ", results_img_ids - gt_img_ids)
+                print("IDs in results: ", results_img_ids)
                 continue
 
             # Initialize COCO detections api
@@ -200,7 +202,19 @@ def tune_confidence_threshold(annFile, resFile, threshold_range, plot_f1):
             plt.grid()
             plt.show()
 
-        optimal_thresholds[cat_id] = (best_threshold, best_f1)
+        
+        if best_f1 > 0:
+            optimal_thresholds[cat_id] = (best_threshold, best_f1)
+        else:
+            print(f"No valid F1 score found for category {cat_id}")
+
+    # Check for missing categories
+    missing_categories = cat_ids - optimal_thresholds.keys()
+    if missing_categories:
+        print(f"Missing categories: {missing_categories}")
+    
+    for cat_id in missing_categories:
+        optimal_thresholds[cat_id] = (0, 0)
 
     return cat_ids, optimal_thresholds
 
@@ -208,32 +222,25 @@ def tune_confidence_threshold(annFile, resFile, threshold_range, plot_f1):
 if __name__ == '__main__':
 
     #annFile = 'coco-2017/raw/instances_val2017.json'
-    annFile = "Test/MGN/MGN_gt_val.json"
+    annFile = "MGN/MGN_gt.json"
    # resFile = "Results/results_coco_validation.json"   # Results file for the entire validation set
     #resFile = "Results/results_coco_subset_baseline.json"   # Results file for the subset of the test set
     #resFile = "Results/results_coco_subset_tuned.json"   # Results file for the subset of the test set
     #resFile = "Results/results_imgnet_coco_subset.json"   # Results file for the subset of the test set using \5 imgnet queries
-    #resFile = "Results/results_MGN_val.json"   # Results file for MGN
-    #resFile = "Results/results_MGN_subset_test.json"   # Results file for MGN
-    #resFile = "Results/results_MGN_subset_test_nms_sameClass.json"   # Results file for MGN
-    #resFile = "Results/results_MGN_val_noNMS.json"   # Results file for MGN
-    #resFile = "Results/results_MGN.json"   # Results file for MGN
-    #resFile = "testMGN.json"
-    resFile = "Results/results_MGN_val_again.json"
+    resFile = "Results/results_MGN_val_run.json"  
+    #resFile = "Results/results_MGN_subset.json"
 
     cat_ap = evaluate(annFile, resFile, plot_pr = False, per_category = True)
-
+   
     print("\nCategories with AP < 0.1:")
     for cat_id, ap in cat_ap.items():
         if ap < 0.1:
             print(f"Category {cat_id} ({ID2CLASS[cat_id]}): AP = {ap:.4f}")
     print(f"{len([ap for ap in cat_ap.values() if ap < 0.1])} categories have AP < 0.1")
-    """
+    
     # Tune confidence threshold
     thresholds = np.arange(0.1, 1.0, 0.05)
-    cat_ids, optimal_thresholds = tune_confidence_threshold(annFile, resFile, thresholds, plot_f1=True)
+    cat_ids, optimal_thresholds = tune_confidence_threshold(annFile, resFile, thresholds, plot_f1=False)
 
     print("Categories evaluated: ", cat_ids)
     print("Optimal thresholds and F1 scores: ", optimal_thresholds)
-
-    """

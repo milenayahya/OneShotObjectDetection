@@ -5,6 +5,7 @@ from PIL import Image
 import json
 from utils import convert_from_x1y1x2y2_to_coco, convert_masks_to_boxes
 from matplotlib import pyplot as plt
+from config import query_dir
 import random
 
 CLASS2ID = {
@@ -242,6 +243,41 @@ def load_all_labels(dir):
                             break
     return categories_set
 
+def crop_object(image_id, bbox, dir, cat, i, new_dir):
+
+    for file in os.listdir(dir):
+        if file.startswith(f"scene{image_id}_"):
+            scene_path = os.path.join(dir, file)
+            im = Image.open(scene_path)
+            x1, y1, w, h = bbox
+            im = im.crop((x1, y1, x1+w, y1+h))
+            new_file_name = os.path.join(new_dir, f"{CLASS2ID[cat]}_{cat}_{i+1}.png")
+            im.save(new_file_name)
+            break
+
+def mgn_create_queries(labels_file, image_dir, min_size, num_objects_per_class):
+    
+    with open(labels_file, 'r') as f:
+        labels = json.load(f)
+    categories = {k for k in CLASS2ID.keys()}
+
+    dir = os.path.join(query_dir, f"MGN_{num_objects_per_class}_shot")
+    if not os.path.exists(dir):
+        os.makedirs(dir)
+
+    for cat in categories:
+        i = 0
+        for ann in labels["annotations"]:
+            if ann["category_id"] == CLASS2ID[cat]:
+                bbox = ann["bbox"]
+                if bbox[2] * bbox[3] >= min_size:
+                    image_id = ann["image_id"]
+                    crop_object(image_id, bbox, image_dir, cat, i, dir)
+                    i += 1
+                    if i == num_objects_per_class:
+                        break                   
+
+
 def get_test_scenes(dir):
     test_scenes= []
     for file in os.listdir(dir):
@@ -249,7 +285,7 @@ def get_test_scenes(dir):
         test_scenes.append(scene) 
     return test_scenes
              
-def create_labels_file(dir, labels_file, test=True):
+def create_labels_file(dir, labels_file, test=False):
     labels = {
         "images": [],
         "annotations": [],
@@ -272,22 +308,39 @@ def create_labels_file(dir, labels_file, test=True):
             if os.path.isdir(scene_path):
                 for file in os.listdir(scene_path):
                     if file == f"{viewpoint}.npz":
+                        print("Found npz file")
                         file_path = os.path.join(scene_path, file)
                         with np.load(file_path) as data:
                             print("processing scene: ", scene)
                             instances_semantic = data['instances_semantic']
-                            categories = np.unique(instances_semantic)
-                            categories = categories[categories != 0]
-                            bboxes = convert_masks_to_boxes(instances_semantic)
-                            bboxes = convert_from_x1y1x2y2_to_coco(bboxes)
-                            break
+                            instances_objects = data['instances_objects']
+                            unique_instances = np.unique(instances_objects)
+                            for instance_id in unique_instances:
+                                if instance_id == 0:
+                                    continue
+                                instance_mask = (instances_objects == instance_id)
+                                category_id = np.unique(instances_semantic[instance_mask])[0]
+                                bbox = convert_masks_to_boxes(instance_mask)
+                                bbox = convert_from_x1y1x2y2_to_coco(bbox)
+                                categories.append(category_id)
+                                bboxes.append(bbox)
+                        break
+
+                    else:
+                        print(f"{viewpoint}.npz not found")
+                    
             
             labels["images"].append({
-                "id": scene_nb,
+                "id": int(scene_nb),
                 "file_name": f"{scene}.png"
             })
 
+            if len(bboxes) == 0:
+                print(f"No objects found in scene {scene}_{viewpoint}")
+            
+
             for cat, box in zip(categories, bboxes):
+                box = box.squeeze()
                 area = float(box[2] * box[3])
                 labels["annotations"].append({
                     "id": ann_id,
@@ -327,7 +380,7 @@ def get_scenes_with_single_category(labels_file):
 
     return scene_for_each_category
         
-def create_query_set(labels_file, query_set_file, dir):
+def find_query_images(labels_file, query_set_file, dir):
     if not os.path.exists(query_set_file):
         os.makedirs(query_set_file)
     scenes = get_scenes_with_single_category(labels_file)
@@ -366,54 +419,66 @@ def create_subset(dir, new_dir):
 
 if __name__ == '__main__':
 
-    # Load all images from the dataset
     dir = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real"
-    #load_all_images(dir, "MGN_images")
+    create_labels_file(dir, "MGN/MGN_gt.json", test=False)
+
+    '''
+    dir = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real\\data_ifl_4\\mnt\\data1\\data_ifl_real\\scene212\\3.npz"
+
+    data = np.load(dir)
+
+    viewpts = get_viewpoints("MGN/MGN_images")
+    print(viewpts["scene212"])
+
+    instances_semantic = data['instances_semantic']
+    instances_objects = data['instances_objects']
+    plt.imshow(instances_objects)
+    plt.show()
+    plt.imshow(instances_semantic)
+    plt.show()
+    
+    
+
+    file = "MGN/MGN_gt.json"
+    with open(file, 'r') as f:
+        labels = json.load(f)
+    anns = labels["images"]
+
+    unique_imgs = set(anns[i]["id"] for i in range(len(anns)))
+    print(len(unique_imgs))
+    #mgn_create_queries("MGN/MGN_gt.json", "MGN/MGN_images", 5000, 5)
+    
     
     # Create labels file
-    #create_labels_file(dir, "Test/MGN/MGN_gt_val.json", test=True)
+    dir = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real"
+    create_labels_file(dir, "Test/MGN/MGN_gt_val.json", test=False)
+
+    
+    path = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real\\data_ifl_0\\mnt\\data1\\data_ifl_real\\scene0\\3.npz"
+    
+    data = np.load(path)
+    objects_semantic = data['instances_objects']
+    plt.imshow(objects_semantic)
+    plt.show()
+    
+   
+    
+    # Load all images from the dataset
+    dir = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real"
+    load_all_images(dir, "MGN_images")
+    
+    # Create labels file
+    create_labels_file(dir, "Test/MGN/MGN_gt_val.json", test=True)
 
     create_subset("MGN/MGN_images", "MGN/MGN_subset")
 
 
-    '''
-    create_query_set("MGN/MGN_labels.json", "Queries/MGN_query_set", "MGN/MGN_images")
+    
+    find_query_images("MGN/MGN_labels.json", "Queries/MGN_query_set", "MGN/MGN_images")
     
     scenes = get_scenes_with_single_category("MGN/MGN_gt.json")
     scenes = [scene for sublist in scenes.values() for scene in sublist]
     
     create_test_images("MGN/MGN_images", "Test/MGN_test", scenes) 
     
-    
-    bboxes = [
-    [
-      1001.0,
-      598.0,
-      326.0,
-      298.0
-    ]   ,
-        [
-      732.0,
-      376.0,
-      144.0,
-      177.0
-    ],
-    [
-      1294.0,
-      283.0,
-      273.0,
-      283.0
-    ]
-    ]
-    
-    filepath = "C:\\Users\\cm03009\\Downloads\\MetaGraspNetV2_Real\\\\data_ifl_1\\mnt\\data1\\data_ifl_real\\scene55\\3.npz"
-    data = np.load(filepath)
-    plt.imshow(data['instances_semantic'])
-    
-    for box in bboxes:
-        x1,y1,w,h = box
-        plt.plot([x1, x1+w, x1+w, x1, x1], [y1, y1, y1+h, y1+h, y1], color='red')
-    
-    plt.show()
-    #print(data['instances_objects'].shape) 
     '''

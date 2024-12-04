@@ -8,7 +8,7 @@ from torch.utils.tensorboard import SummaryWriter
 class RunOptions:
     def __init__(self, 
                  mode: Literal["test", "validation"],
-                 data: Literal["ImageNet", "COCO", "MGN", "TestData"],
+                 data: Literal["ImageNet", "COCO", "MGN", "TestData", "Logos"],
                  source_image_paths: str,
                  target_image_paths: str,
                  model = Owlv2ForObjectDetection,

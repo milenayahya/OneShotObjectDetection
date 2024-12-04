@@ -102,12 +102,12 @@ if __name__ == "__main__":
     #zero_shot()
 
     
-    file = os.path.join(query_dir, f"classes_{options.data}.json")
+    file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
 
     # Load the list of tensors onto the GPU
-    query_embeddings = torch.load(f'Queries/query_embeddings_{options.data}_gpu.pth', map_location='cuda')
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location='cuda')
     
 
     counter = 0
