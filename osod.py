@@ -254,49 +254,102 @@ def visualize_queries(image_batch, indexes, source_boxes, source_pixel_values, b
 
         image_idx = batch_start + idx 
         category = classes[image_idx]
-        box = source_boxes[idx][indexes[image_idx]].detach().numpy()
-        cx, cy, w, h = box
-        ax.plot(
-            [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
-            [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
-            color="lime",
-        )
+        if indexes[image_idx] is not None:
+            box = source_boxes[idx][indexes[image_idx]].detach().numpy()
+            cx, cy, w, h = box
+            ax.plot(
+                [cx - w / 2, cx + w / 2, cx + w / 2, cx - w / 2, cx - w / 2],
+                [cy - h / 2, cy - h / 2, cy + h / 2, cy + h / 2, cy - h / 2],
+                color="lime",
+            )
 
-        # print("Index:", i)
-        # print("Objectness:", objectness)
+            # print("Index:", i)
+            # print("Objectness:", objectness)
 
-        # Add text for objectness score
-        ax.text(
-            cx - w / 2 + 0.015,
-            cy + h / 2 - 0.015,
-            f"Index {indexes[idx]}",
-            ha="left",
-            va="bottom",
-            color="black",
-            bbox={
-                "facecolor": "white",
-                "edgecolor": "lime",
-                "boxstyle": "square,pad=.3",
-            },
-        )
+            # Add text for objectness score
+            ax.text(
+                cx - w / 2 + 0.015,
+                cy + h / 2 - 0.015,
+                f"Index {indexes[idx]}",
+                ha="left",
+                va="bottom",
+                color="black",
+                bbox={
+                    "facecolor": "white",
+                    "edgecolor": "lime",
+                    "boxstyle": "square,pad=.3",
+                },
+            )
         ax.set_ylim(1, 0)
         ax.set_title(f"Zero-Shot on {category}")
         # Add image with bounding boxes to the writer
         writer.add_figure(f"Query_Images_with_boxes/image_{idx}_batch{batch_start//args.query_batch_size}", fig, global_step= batch_start+idx+1)
         writer.flush()
 
+def find_embeddings( 
+    images,
+    model: Owlv2ForObjectDetection,
+    processor: Owlv2Processor,
+    args: "RunOptions"
+)-> Union[Tuple[List[int], List[np.ndarray], List[str]], None]:
+    
+    """
+    from transformers import OwlViTForObjectDetection, OwlViTProcessor
+    model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch16").to("cuda")
+    processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch16")
+    """
+    query_embeddings = []
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    print(f"Using device: {device}")
+
+    logger.info(f"Finding the embeddings of the query images.")
+    total_batches = (len(images) + args.query_batch_size - 1) // args.query_batch_size
+  
+    with tqdm(total=total_batches, desc="Processing query batches") as pbar:
+        for batch_start in range(0, len(images), args.query_batch_size):
+    
+            torch.cuda.empty_cache()
+            image_batch = images[batch_start : batch_start + args.query_batch_size]
+            source_pixel_values = processor(
+                images=image_batch, return_tensors="pt"
+            ).pixel_values.to(device)
+            with torch.no_grad():
+                feature_map = model.image_embedder(source_pixel_values)[0] # Shape: [batch_size, num_patches, num_patches, hidden_size]
+                
+                # Rearrange feature map
+                batch_size, height, width, hidden_size = feature_map.shape
+                image_features = feature_map.reshape(batch_size, height * width, hidden_size).to(device)
+
+                # Extract global image embedding (CLS token)
+                #image_features = torch.mean(image_features, dim=1)    # CLS token
+                image_features = image_features[:,0,:]                 # Average pooling
+
+                source_class_embedding = model.class_predictor(image_features)[1]
+                print("Source class embedding shape:", source_class_embedding.shape)
+                print("Source class embedding:", source_class_embedding)
+                #batch_query_embeddings = torch.mean(source_class_embedding, dim=1)
+                query_embeddings.extend(source_class_embedding)
+
+            pbar.update(1)
+    
+    return query_embeddings
 
 def zero_shot_detection(
     model: Owlv2ForObjectDetection,
     processor: Owlv2Processor,
     args: "RunOptions",
-    writer: Optional[SummaryWriter] = None,
+    writer: Optional[SummaryWriter],
+    crop: List[int] = None,
 )-> Union[Tuple[List[int], List[np.ndarray], List[str]], None]:
 
     """
     Perform zero-shot detection on a batch of query images.
 
     """
+    
+
     if args.data == "COCO":
         from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     elif args.data == "MGN":
@@ -312,8 +365,17 @@ def zero_shot_detection(
     indexes = []
     all_data = []
 
-    start_GPUtoCPU = torch.cuda.Event(enable_timing=True)
-    end_GPUtoCPU = torch.cuda.Event(enable_timing=True)
+    if crop is None:
+        crop = [0] * len(images)
+    
+    if np.all(crop == 1):
+        logger.info("All images are cropped")
+        query_embeddings = find_embeddings(images, model, processor, args)
+        return indexes, query_embeddings, classes 
+
+
+    #start_GPUtoCPU = torch.cuda.Event(enable_timing=True)
+    #end_GPUtoCPU = torch.cuda.Event(enable_timing=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
@@ -361,13 +423,17 @@ def zero_shot_detection(
                 #print(f"Time taken to transfer embeddings of image {i} in batch {batch_start//batch_size} from GPU to CPU is: {time_total} ms")
                
                 # Extract the query embedding for the current images based on the provided index
-                max_indices = torch.argmax(current_objectnesses, dim=1) # has the shape of batch_size
-                indexes.extend(max_indices.cpu().tolist()) # convert to list
+                for i in range(batch_size):
+                    if crop[batch_start + i] == 0:
+                        max_index = torch.argmax(current_objectnesses[i])
+                        indexes.append(max_index.cpu().item())
+                        query_embedding = current_class_embeddings[i, max_index]
+                    else:
+                        indexes.append(None)  # No specific index for uncropped images
+                        #query_embedding = current_class_embeddings[i]
+                        query_embedding = torch.mean(current_class_embeddings[i], dim=0)
 
-                batch_query_embeddings = current_class_embeddings[torch.arange(batch_size), max_indices]
-                
-                query_embeddings.extend(batch_query_embeddings) #embeddings are stored as GPU tensors
-
+                    query_embeddings.append(query_embedding)
             pbar.update(1)
 
     file = os.path.join(query_dir, f"objectness_indexes_{args.data}.json")
@@ -496,10 +562,10 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
     for image_id, data in image_data.items():
         for filename in os.listdir(dir):
             file = filename.split(".")[0] #remove extension
-            if args.data == "MGN" and not per_image:
+            if args.data == "MGN" and file.startswith("scene"):
                 file = file.split("_")[0] #remove viewpoint of each scene
             
-            if (file.endswith(str(image_id)) and (args.data != "MGN" or per_image)) or (args.data == "MGN" and file == f"scene{image_id}"):
+            if (file.endswith(str(image_id)) and not file.startswith("scene")) or (args.data == "MGN" and file == f"scene{image_id}"):
                 if per_image: 
                     image_path = args.target_image_paths
                 else:   
@@ -590,7 +656,9 @@ def one_shot_detection_batches(
             ) # dimension = [batch_size, nb_of_boxes, 4]
 
             reshaped_feature_map = feature_map.view(b, h * w, d)
-
+            print("Length of query embeddings:", len(query_embeddings))
+            for qe in query_embeddings:
+                print(qe.shape)
             query_embeddings_tensor = torch.stack(query_embeddings) # Shape: (num_batches, batch_size, hidden_size)
             target_class_predictions, _ = model.class_predictor(reshaped_feature_map, query_embeddings_tensor)  # Shape: [batch_size, num_queries, num_classes]
 
@@ -606,13 +674,11 @@ def one_shot_detection_batches(
             scores = torch.sigmoid(target_class_predictions)
 
             if args.topk_test is not None:
-                print(f"Leaving only top k boxes {args.topk_test}" )
                 top_indices = torch.argsort(scores[:, :, 0], descending=True)[:, :args.topk_test]
                 scores = scores[torch.arange(b)[:, None], top_indices]
                 target_boxes = target_boxes[torch.arange(b)[:, None], top_indices]  
 
             if args.mode == "test":
-                print(f"Filtering boxes with confidence threshold {args.confidence_threshold}")
                 if isinstance(args.confidence_threshold, (int, float)):
                     top_indices = (scores >= args.confidence_threshold).any(dim=-1)
                 else:
@@ -672,7 +738,9 @@ def one_shot_detection_batches(
             nms_boxes_coco, nms_scores, nms_classes, nms_image_indices = nms_batched(
                 flattened_boxes, flattened_scores, flattened_classes, flattened_image_indices, args
                 )  
-
+            if(len(nms_boxes_coco) == 0):
+                logger.info("No boxes detected in the image")
+                
             # Collect results in COCO format
             for idx, (box, score, cls, img_idx) in enumerate(zip(nms_boxes_coco, nms_scores, nms_classes, nms_image_indices)):
                 
@@ -681,12 +749,17 @@ def one_shot_detection_batches(
                     img_id = args.target_image_paths.split("/")[-1].split(".")[0]
                 elif args.data == "COCO":
                     img_id = map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start))
-                elif args.data == "MGN":
+                elif args.data == "MGN" and not args.target_image_paths == os.path.join(test_dir, "Comau"):
                     img_id = get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start)
                     img_id = int(img_id.split(".")[0].split("_")[0].split("scene")[1])
                 elif args.data == "Logos":
                     img_id = get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start)
                     img_id = img_id.split(".")[0]
+                elif args.target_image_paths == os.path.join(test_dir, "Comau"):
+                    print("Entered the if condition")
+                    img_id = get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start)
+                    img_id = img_id.split(".")[0]
+                    print("Image ID:", img_id)
                 else:
                     img_id = img_idx.item() + batch_start
 
@@ -736,22 +809,21 @@ if __name__ == "__main__":
 
     options = RunOptions(
         mode = "test",
-        source_image_paths= os.path.join(query_dir, "MGN_bad"),
-        target_image_paths= os.path.join(test_dir, "coco_val_subset"), 
-        data="COCO",
-        comment="vis_test", 
+        source_image_paths= os.path.join(query_dir, "Comau_cropped"),
+        target_image_paths= os.path.join(test_dir, "Comau"), 
+        data="MGN",
+        comment="comau_cropped", 
         query_batch_size=8, 
-        manual_query_selection=True,
-        confidence_threshold= 0.96,
+        manual_query_selection=False,
+        confidence_threshold= 0.95,
         test_batch_size=8, 
         k_shot=1,
         topk_test= 10,
-        visualize_query_images=True,
-        nms_between_classes=True,
-        nms_threshold=0.2,
+        visualize_query_images=False,
+        nms_between_classes=False,
+        nms_threshold=0.3,
         write_to_file_freq=5,
     )
-
 
     # Image-Conditioned Object Detection
     writer = SummaryWriter(comment=options.comment)
@@ -762,10 +834,11 @@ if __name__ == "__main__":
     print(torch.cuda.device_count())
     print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
 
-    """
+    crop = np.ones(12)
+    #crop = np.ones(20)
     # Find the objects in the query images
     if options.manual_query_selection:
-       # zero_shot_detection(model, processor, options, writer)
+        zero_shot_detection(model, processor, options, writer)
 
         categories = ["coffeefilter", "cat_milk"]
         idx = [1216, 1743]
@@ -784,7 +857,8 @@ if __name__ == "__main__":
             model,
             processor,
             options,
-            writer
+            writer,
+            crop
         )
     
     
@@ -794,7 +868,7 @@ if __name__ == "__main__":
 
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
-    
+    """
     
     file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'r') as f:
@@ -813,8 +887,8 @@ if __name__ == "__main__":
         writer,
         per_image=False
     )
+    
+    filepath = os.path.join(results_dir, f"results_{options.comment}.json")
+    visualize_results(filepath, writer, per_image=False, args=options, random_selection=None)
+   
     """
-    filepath = os.path.join(results_dir, f"results_coco_subset_tuned.json")
-    visualize_results(filepath, writer, per_image=False, args=options, random_selection=0.1)
-    
-    

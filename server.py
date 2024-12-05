@@ -102,12 +102,12 @@ if __name__ == "__main__":
     #zero_shot()
 
     
-    file = os.path.join(query_dir, f"classes_{options.comment}.json")
+    file = os.path.join(query_dir, f"classes_{options.data}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
 
     # Load the list of tensors onto the GPU
-    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location='cuda')
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.data}_gpu.pth', map_location='cuda')
     
 
     counter = 0
@@ -137,7 +137,7 @@ if __name__ == "__main__":
                 path = save_image(image_data, dir, filename)
                 counter += 1
 
-                options.target_image_paths = path
+                options.target_image_paths = path   # the path used in osod.py visualize_results
                 
                 # Perform one-shot detection for new images
                 id, predictions= one_shot_detection_batches(

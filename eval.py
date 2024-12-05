@@ -227,8 +227,9 @@ if __name__ == '__main__':
     #resFile = "Results/results_coco_subset_baseline.json"   # Results file for the subset of the test set
     #resFile = "Results/results_coco_subset_tuned.json"   # Results file for the subset of the test set
     #resFile = "Results/results_imgnet_coco_subset.json"   # Results file for the subset of the test set using \5 imgnet queries
-    resFile = "Results/results_MGN_val_run.json"  
-    #resFile = "Results/results_MGN_subset.json"
+    #resFile = "Results/results_MGN_val_run.json"  
+    resFile = "Results/results_MGN_subset.json"
+    resFile = "Results/results_5_shot.json"
 
     cat_ap = evaluate(annFile, resFile, plot_pr = False, per_category = True)
    
@@ -238,9 +239,11 @@ if __name__ == '__main__':
             print(f"Category {cat_id} ({ID2CLASS[cat_id]}): AP = {ap:.4f}")
     print(f"{len([ap for ap in cat_ap.values() if ap < 0.1])} categories have AP < 0.1")
     
+    """
     # Tune confidence threshold
     thresholds = np.arange(0.1, 1.0, 0.05)
     cat_ids, optimal_thresholds = tune_confidence_threshold(annFile, resFile, thresholds, plot_f1=False)
 
     print("Categories evaluated: ", cat_ids)
     print("Optimal thresholds and F1 scores: ", optimal_thresholds)
+    """
