@@ -80,7 +80,7 @@ options.target_image_paths = dir
 writer = SummaryWriter(comment=options.comment)
 model = options.model.from_pretrained(options.backbone)
 processor = options.processor.from_pretrained(options.backbone)
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 if __name__ == "__main__":
 
@@ -107,7 +107,7 @@ if __name__ == "__main__":
         classes = json.load(f)
 
     # Load the list of tensors onto the GPU
-    query_embeddings = torch.load(f'Queries/query_embeddings_{options.data}_gpu.pth', map_location='cuda')
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.data}_gpu.pth', map_location=device)
     
 
     counter = 0

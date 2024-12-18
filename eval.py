@@ -223,7 +223,7 @@ if __name__ == '__main__':
 
     #annFile = 'coco-2017/raw/instances_val2017.json'
     annFile = "MGN/MGN_gt.json"
-   # resFile = "Results/results_coco_validation.json"   # Results file for the entire validation set
+    #resFile = "Results/results_coco_validation.json"   # Results file for the entire validation set
     #resFile = "Results/results_coco_subset_baseline.json"   # Results file for the subset of the test set
     #resFile = "Results/results_coco_subset_tuned.json"   # Results file for the subset of the test set
     #resFile = "Results/results_imgnet_coco_subset.json"   # Results file for the subset of the test set using \5 imgnet queries

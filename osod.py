@@ -1,3 +1,4 @@
+
 from transformers import Owlv2Processor, Owlv2ForObjectDetection
 import json
 import torch
@@ -296,45 +297,31 @@ def find_embeddings(
     """
     from transformers import OwlViTForObjectDetection, OwlViTProcessor
     model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch16").to("cuda")
-    processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch16")
+    proc    essor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch16")
     """
     query_embeddings = []
+    first_token = []
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
-    print(f"Using device: {device}")
 
-    logger.info(f"Finding the embeddings of the query images.")
     total_batches = (len(images) + args.query_batch_size - 1) // args.query_batch_size
   
-    with tqdm(total=total_batches, desc="Processing query batches") as pbar:
-        for batch_start in range(0, len(images), args.query_batch_size):
-    
-            torch.cuda.empty_cache()
-            image_batch = images[batch_start : batch_start + args.query_batch_size]
-            source_pixel_values = processor(
-                images=image_batch, return_tensors="pt"
-            ).pixel_values.to(device)
-            with torch.no_grad():
-                feature_map = model.image_embedder(source_pixel_values)[0] # Shape: [batch_size, num_patches, num_patches, hidden_size]
-                
-                # Rearrange feature map
-                batch_size, height, width, hidden_size = feature_map.shape
-                image_features = feature_map.reshape(batch_size, height * width, hidden_size).to(device)
+    for batch_start in range(0, len(images), args.query_batch_size):
 
-                # Extract global image embedding (CLS token)
-                #image_features = torch.mean(image_features, dim=1)    # CLS token
-                image_features = image_features[:,0,:]                 # Average pooling
+        torch.cuda.empty_cache()
+        image_batch = images[batch_start : batch_start + args.query_batch_size]
+        source_pixel_values = processor(
+            images=image_batch, return_tensors="pt"
+        ).pixel_values.to(device)
+        with torch.no_grad(): # Off when finetuning
+            pooled_output, image_features = model.get_image_features(source_pixel_values, return_dict = True)
+            pooled_output = model.class_predictor(pooled_output)[1]
+            query_embeddings.append(image_features)
+            first_token.append(pooled_output)
 
-                source_class_embedding = model.class_predictor(image_features)[1]
-                print("Source class embedding shape:", source_class_embedding.shape)
-                print("Source class embedding:", source_class_embedding)
-                #batch_query_embeddings = torch.mean(source_class_embedding, dim=1)
-                query_embeddings.extend(source_class_embedding)
-
-            pbar.update(1)
-    
-    return query_embeddings
+   # print("CLS token: ", query_embeddings)
+    return query_embeddings, first_token
 
 def zero_shot_detection(
     model: Owlv2ForObjectDetection,
@@ -370,7 +357,7 @@ def zero_shot_detection(
     
     if np.all(crop == 1):
         logger.info("All images are cropped")
-        query_embeddings = find_embeddings(images, model, processor, args)
+        query_embeddings, first_token = find_embeddings(images, model, processor, args)
         return indexes, query_embeddings, classes 
 
 
@@ -565,7 +552,7 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
             if args.data == "MGN" and file.startswith("scene"):
                 file = file.split("_")[0] #remove viewpoint of each scene
             
-            if (file.endswith(str(image_id)) and not file.startswith("scene")) or (args.data == "MGN" and file == f"scene{image_id}"):
+            if (file.endswith(str(image_id)) and not file.startswith("scene")) or (args.data == "MGN" and file == f"scene{image_id}" or file==image_id):
                 if per_image: 
                     image_path = args.target_image_paths
                 else:   
@@ -656,10 +643,17 @@ def one_shot_detection_batches(
             ) # dimension = [batch_size, nb_of_boxes, 4]
 
             reshaped_feature_map = feature_map.view(b, h * w, d)
-            print("Length of query embeddings:", len(query_embeddings))
-            for qe in query_embeddings:
-                print(qe.shape)
-            query_embeddings_tensor = torch.stack(query_embeddings) # Shape: (num_batches, batch_size, hidden_size)
+
+            # if queries obtained by 0 shot
+            #query_embeddings_tensor = torch.stack(query_embeddings) # Shape: (num_batches, batch_size, hidden_size)
+
+            # if queries obtained by cls token
+            query_embeddings_tensor = torch.cat(query_embeddings,dim=0)
+
+            #  if only one query
+            #query_embeddings_tensor = query_embeddings[0]
+
+            print("Query embeddings shape:", query_embeddings_tensor.shape)
             target_class_predictions, _ = model.class_predictor(reshaped_feature_map, query_embeddings_tensor)  # Shape: [batch_size, num_queries, num_classes]
 
             outputs = ModelOutputs(logits=target_class_predictions, pred_boxes=target_boxes)
@@ -749,17 +743,11 @@ def one_shot_detection_batches(
                     img_id = args.target_image_paths.split("/")[-1].split(".")[0]
                 elif args.data == "COCO":
                     img_id = map_coco_ids(mapping, get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start))
-                elif args.data == "MGN" and not args.target_image_paths == os.path.join(test_dir, "Comau"):
-                    img_id = get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start)
-                    img_id = int(img_id.split(".")[0].split("_")[0].split("scene")[1])
-                elif args.data == "Logos":
+                elif args.data == "MGN" or args.data == "Logos" or args.data == "Comau":
                     img_id = get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start)
                     img_id = img_id.split(".")[0]
-                elif args.target_image_paths == os.path.join(test_dir, "Comau"):
-                    print("Entered the if condition")
-                    img_id = get_filename_by_index(args.target_image_paths, img_idx.item() + batch_start)
-                    img_id = img_id.split(".")[0]
-                    print("Image ID:", img_id)
+                    if "_" in img_id:
+                        img_id = img_id.split("_")[0]
                 else:
                     img_id = img_idx.item() + batch_start
 
@@ -809,17 +797,17 @@ if __name__ == "__main__":
 
     options = RunOptions(
         mode = "test",
-        source_image_paths= os.path.join(query_dir, "Comau_cropped"),
-        target_image_paths= os.path.join(test_dir, "Comau"), 
+        source_image_paths= os.path.join(query_dir, "FT"),
+        target_image_paths= os.path.join(test_dir, "FT"), 
         data="MGN",
-        comment="comau_cropped", 
+        comment="cls_ft_3_2", 
         query_batch_size=8, 
         manual_query_selection=False,
         confidence_threshold= 0.95,
         test_batch_size=8, 
         k_shot=1,
         topk_test= 10,
-        visualize_query_images=False,
+        visualize_query_images=True,
         nms_between_classes=False,
         nms_threshold=0.3,
         write_to_file_freq=5,
@@ -828,13 +816,16 @@ if __name__ == "__main__":
     # Image-Conditioned Object Detection
     writer = SummaryWriter(comment=options.comment)
     model = options.model.from_pretrained(options.backbone)
+    model.load_state_dict(torch.load("model-FT-3_2.pth"))
     processor = options.processor.from_pretrained(options.backbone)
     
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
     print(torch.cuda.is_available())
-    print(torch.cuda.device_count())
-    print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
-
-    crop = np.ones(12)
+  #  print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
+    
+    
+    crop = np.ones(3)
     #crop = np.ones(20)
     # Find the objects in the query images
     if options.manual_query_selection:
@@ -859,24 +850,33 @@ if __name__ == "__main__":
             options,
             writer,
             crop
+            
         )
+    
     
     
     file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'w') as f:
         json.dump(classes, f)
 
+    if device.type == "cpu":
+        print("Yes")
+        query_embeddings = [embedding.cpu().numpy() for embedding in query_embeddings]
+
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
-    """
-    
+
+
+
     file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
 
     # Load the list of tensors onto the GPU
-    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location='cuda')
-    
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
+    print("query embedding type:", type(query_embeddings))
+    print("query embedding shape:", query_embeddings[0].shape)
+    print("query embedding length:", len(query_embeddings))
     # Detect query objects in test images
     coco_results = one_shot_detection_batches(
         model,
@@ -891,4 +891,4 @@ if __name__ == "__main__":
     filepath = os.path.join(results_dir, f"results_{options.comment}.json")
     visualize_results(filepath, writer, per_image=False, args=options, random_selection=None)
    
-    """
+    
