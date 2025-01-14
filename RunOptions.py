@@ -26,7 +26,9 @@ class RunOptions:
                  visualize_test_images: bool = False,
                  nms_between_classes: bool = False,
                  nms_threshold: float = 0.3,
-                 write_to_file_freq: int = 40):
+                 write_to_file_freq: int = 40,
+                 generalize_categories : bool = False,
+                 use_supercategories: bool = False,):
         self.mode = mode
         self.model = model  
         self.data = data
@@ -47,6 +49,8 @@ class RunOptions:
         self.nms_between_classes = nms_between_classes
         self.nms_threshold = nms_threshold
         self.write_to_file_freq = write_to_file_freq
+        self.generalize_categories  = generalize_categories 
+        self.use_supercategories = use_supercategories
 
     @classmethod
     def from_args(cls, args):
@@ -71,7 +75,10 @@ class RunOptions:
             visualize_test_images=args.visualize_test_images,
             nms_between_classes=args.nms_between_classes,
             nms_threshold=args.nms_threshold,
-            write_to_file_freq=args.write_to_file_freq
+            write_to_file_freq=args.write_to_file_freq,
+            generalize_categories=args.generalize_categories,
+            use_supercategories=args.use_supercategories
+            
         )
         
     @classmethod
@@ -98,6 +105,9 @@ class RunOptions:
             visualize_test_images=params["visualize_test_images"],
             nms_threshold=params["nms_threshold"],
             nms_between_classes=params["nms_between_classes"],
+            write_to_file_freq=params["write_to_file_freq"],
+            generalize_categories=params["generalize_categories"],
+            use_supercategories=params["use_supercategories"]
         )
 
 def parse_args():
@@ -138,6 +148,10 @@ def parse_args():
                         help="Threshold for non-maximum suppression.")
     parser.add_argument("--write_to_file_freq", type=int, default=40,
                         help="Frequency of writing to file measured in batches.")
+    parser.add_argument("--generalize_categories ", type=bool, default=False,
+                        help="Map categories to super categories in the results after prediction.")
+    parser.add_argument("--use_supercategories", type=bool, default=False,  
+                        help="Use super categories for prediction.")
 
     args = parser.parse_args()
     return args

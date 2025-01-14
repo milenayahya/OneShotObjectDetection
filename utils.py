@@ -259,7 +259,7 @@ def save_results(coco_results, options, per_image, im_id):
             for result in coco_results:
                 f.write(json.dumps(result) + '\n')
     
-
+    return file
 
 
 def create_image_id_mapping(labels_dir):

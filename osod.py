@@ -119,7 +119,7 @@ def load_query_image_group(args) -> List[Tuple[np.ndarray, str]]:
     
     Load query images and their categories from a directory.
     Parameters: directory, k (number of query images to load per category)
-    Returns: a list of tuples, each containing an image and its category
+    Returns: a list of tuples, each containing an image and its category(string)
 
     '''
     image_dir = args.source_image_paths
@@ -143,6 +143,10 @@ def load_query_image_group(args) -> List[Tuple[np.ndarray, str]]:
 
             image_path = os.path.join(image_dir, image_name)
             image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+            if args.use_supercategories:
+                from mgn_preprocess import CAT_TO_SUPERCAT_pre
+                if category in CAT_TO_SUPERCAT_pre:
+                    category = CAT_TO_SUPERCAT_pre[category]
             if image is not None:
                 images.append((image, category))
     if images is not None:
@@ -159,13 +163,16 @@ def visualize_objectnesses_batch(
     Visualize the objectness scores and bounding boxes for a batch of query images. (Zero-Shot Detection Visualization)
 
     """
-    if args.data == "COCO":
-        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    if args.use_supercategories:    
+        from mgn_preprocess import ID2CLASS_pre as ID2CLASS
+    elif args.data == "COCO":
+        from coco_preprocess import ID2CLASS
     elif args.data == "MGN":
-        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+        from mgn_preprocess import ID2CLASS
     elif args.data == "Logos":
-        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+        from logos_preprocess import ID2CLASS
     unnormalized_source_images = []
+
     for pixel_value in source_pixel_values:
         unnormalized_image = get_preprocessed_image(pixel_value)
         unnormalized_source_images.append(unnormalized_image)   
@@ -237,12 +244,6 @@ def visualize_queries(image_batch, indexes, source_boxes, source_pixel_values, b
     Visualize the query embeddings for the selected objects in the query images.
     """
     print("Visualizing query images")
-    if args.data == "COCO":
-        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
-    elif args.data == "MGN":
-        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
-    elif args.data == "Logos":
-        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     unnormalized_source_images = []
     for pixel_value in source_pixel_values:
         unnormalized_image = get_preprocessed_image(pixel_value)
@@ -337,12 +338,15 @@ def zero_shot_detection(
     Perform zero-shot detection on a batch of query images.
 
     """
-    if args.data == "COCO":
-        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    if args.use_supercategories:
+        from mgn_preprocess import CLASS2ID_pre as CLASS2ID
+    elif args.data == "COCO":
+        from coco_preprocess import CLASS2ID
     elif args.data == "MGN":
-        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+        from mgn_preprocess import CLASS2ID
     elif args.data == "Logos":
-        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+        from logos_preprocess import CLASS2ID
+
     source_class_embeddings = []
     images, classes = zip(*load_query_image_group(args))
     images = list(images)
@@ -472,8 +476,6 @@ def zero_shot_detection(
         writer.flush()
         logger.info("Zero-shot detection completed")
 
-        
-
         return indexes, query_embeddings, classes
 
     logger.info("Zero-shot detection completed")
@@ -512,12 +514,14 @@ def find_query_patches_batches(
     Allows manual selection of query object in query image based on index.
 
     """
+    if args.use_supercategories:
+        from mgn_preprocess import CLASS2ID_pre as CLASS2ID
     if args.data == "COCO":
-        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+        from coco_preprocess import CLASS2ID
     elif args.data == "MGN":
-        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+        from mgn_preprocess import CLASS2ID
     elif args.data == "Logos":
-        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+        from logos_preprocess import CLASS2ID
     query_embeddings = []
     images, classes = zip(*load_query_image_group(args))
     images = list(images)
@@ -566,10 +570,14 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
     Random_selection is used to randomly select x% of the images for visualization.
     
     """ 
-    if args.data == "COCO":
-        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    if args.use_supercategories:
+        from mgn_preprocess import ID2CLASS_pre as ID2CLASS, ID2COLOR_pre as ID2COLOR
+    elif args.generalize_categories:
+        from mgn_preprocess import ID2CLASS_post as ID2CLASS, ID2COLOR_post as ID2COLOR
+    elif args.data == "COCO":
+        from coco_preprocess import ID2CLASS, ID2COLOR
     elif args.data == "MGN":
-        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+        from mgn_preprocess import ID2CLASS, ID2COLOR
     elif args.data == "Logos":
         from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     image_data = read_results(filepath, random_selection)
@@ -635,12 +643,6 @@ def one_shot_detection_batches(
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     print(f"Using device: {device}")
-    if args.data == "COCO":
-        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
-    elif args.data == "MGN":
-        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
-    elif args.data == "Logos":
-        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     if per_image:
         logger.info("Loading image")
         if args.target_image_paths.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
@@ -795,22 +797,48 @@ def one_shot_detection_batches(
         # TO DO: make the number of batches to save results to file a parameter
         batch_index = batch_start // args.test_batch_size + 1
         if batch_index % args.write_to_file_freq == 0:
-            save_results(coco_results, args, per_image, img_id)
+            file = save_results(coco_results, args, per_image, img_id)
             #logger.info(f"Saved results of 30 batches to file starting from batch {batch_index - 30} to batch {batch_index}")    
             coco_results.clear()
 
         torch.cuda.empty_cache()
 
+   
     logger.info(f"Finished prediction of all images")
     pbar.close()
 
     # Save the remaining results to file
-    save_results(coco_results, args, per_image, img_id)
+    file = save_results(coco_results, args, per_image, img_id)
+
+    if args.generalize_categories:
+        map_supercategories(file)
 
     if per_image:        
         return img_id, coco_results
     else:
         return coco_results
+    
+def map_supercategories(results_file):
+    """
+    Map the categories in the results file to their supercategories using the provided mapping file.
+    """
+    from mgn_preprocess import ID2CLASS, CLASS2ID_post, CAT_TO_SUPERCAT_post
+    with open(results_file, 'r') as f:
+        results = [json.loads(line) for line in f]
+    
+    for result in results:
+        category_id = result["category_id"]
+        category = ID2CLASS[category_id]
+        supercategory = CAT_TO_SUPERCAT_post[category]
+        result["category_id"] = CLASS2ID_post[supercategory]
+
+    with open(results_file, 'w') as f:
+        for result in results:
+            json.dump(result, f)
+            f.write("\n")
+    
+    return 
+    
 
 if __name__ == "__main__":
     
@@ -828,10 +856,10 @@ if __name__ == "__main__":
 
     options = RunOptions(
         mode = "test",
-        source_image_paths= os.path.join(query_dir, "Comau_cropped"),
-        target_image_paths= os.path.join(test_dir, "Comau/3D"), 
+        source_image_paths= os.path.join(query_dir, "MGN_query_set"),
+        target_image_paths= os.path.join(test_dir, "MGN/MGN_subset"), 
         data="MGN",
-        comment="test_cls", 
+        comment="supercats", 
         query_batch_size=8, 
         manual_query_selection=False,
         confidence_threshold= 0.95,
@@ -842,6 +870,8 @@ if __name__ == "__main__":
         nms_between_classes=False,
         nms_threshold=0.3,
         write_to_file_freq=5,
+        generalize_categories= False,
+        use_supercategories= True
     )
 
     # Image-Conditioned Object Detection
@@ -855,8 +885,9 @@ if __name__ == "__main__":
     print(torch.cuda.is_available())
     print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
     
+    
     #cls = [0] * 12
-    cls = [1] * 12
+    #cls = [1] * 12
     # Find the objects in the query images
     if options.manual_query_selection:
       #  zero_shot_detection(model, processor, options, writer)
@@ -880,11 +911,9 @@ if __name__ == "__main__":
             processor,
             options,
             writer,
-            cls
+            
             
         )
-    
-    
     
     
     file = os.path.join(query_dir, f"classes_{options.comment}.json")
@@ -897,7 +926,7 @@ if __name__ == "__main__":
 
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
-    
+   
 
     
     file = os.path.join(query_dir, f"classes_{options.comment}.json")
@@ -916,7 +945,7 @@ if __name__ == "__main__":
         writer,
         per_image=False
     )
-    
+     
     if coco_results is not None:
         filepath = os.path.join(results_dir, f"results_{options.comment}.json")
         visualize_results(filepath, writer, per_image=False, args=options, random_selection=None)

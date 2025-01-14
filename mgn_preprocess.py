@@ -185,6 +185,282 @@ ID2COLOR = {
 }
 
 
+############################################################################################
+# Mapping to supercategories in a postprocessing step
+ID2CLASS_post = {
+    0: "food",
+    1: "kitchenware",
+    2: "tool",
+    3: "model",
+    4: "personal_care",
+    5: "storage",
+    6: "household_item"
+
+}
+
+ID2COLOR_post = {
+    0: (1, 0, 0),       # Red for food
+    1: (0, 1, 0),       # Green for kitchenware
+    2: (0, 0, 1),       # Blue for tool
+    3: (1, 1, 0),     # Yellow for model
+    4: (1, 0, 1),     # Magenta for personal care
+    5: (0, 1, 1),     # Cyan for storage
+    6: (128/255, 0, 128/255)      # Purple for household item
+}
+
+
+CLASS2ID_post = {v: k for k, v in ID2CLASS_post.items()}
+
+CAT_TO_SUPERCAT_post = {
+    "cracker_box": "food",
+    "sugar_box": "food",
+    "tomato_soup_can": "food",
+    "mustard_bottle": "food",
+    "potted_meat_can": "food",
+    "banana": "food",
+    "strawberry": "food",
+    "apple": "food",
+    "lemon": "food",
+    "peach": "food",
+    "pear": "food",
+    "orange": "food",
+    "plum": "food",
+    "cat_milk": "food",
+    "bowl": "kitchenware",
+    "mug": "kitchenware",
+    "glass_cup": "kitchenware",
+    "wineglass": "kitchenware",
+    "coffeefilter": "kitchenware",
+    "wash_glove": "kitchenware",
+    "wash_sponge": "kitchenware",
+    "power_drill": "tool",
+    "knife": "tool",
+    "phillips_screwdriver": "tool",
+    "flat_screwdriver": "tool",
+    "wire_cutter": "tool",
+    "pneumatic_cylinder": "tool",
+    "handsaw": "tool",
+    "clamp": "tool",
+    "clamp_small": "tool",
+    "clamp_big": "tool",
+    "racquetball": "model",
+    "a_toy_airplane": "model",
+    "c_toy_airplane": "model",
+    "d_toy_airplane": "model",
+    "f_toy_airplane": "model",
+    "h_toy_airplane": "model",
+    "i_toy_airplane": "model",
+    "j_toy_airplane": "model",
+    "k_toy_airplane": "model",
+    "toydog": "model",
+    "greek_busts": "model",
+    "mannequin": "model",
+    "desinfection": "personal_care",
+    "hairspray": "personal_care",
+    "handcream": "personal_care",
+    "toothpaste": "personal_care",
+    "shaving_cream": "personal_care",
+    "cream_soap": "personal_care",
+    "lipcare": "personal_care",
+    "lipstick": "personal_care",
+    "nosespray": "personal_care",
+    "deo": "personal_care",
+    "box_1": "storage",
+    "box_2": "storage",
+    "box_3": "storage",
+    "box_4": "storage",
+    "box_5": "storage",
+    "box_6": "storage",
+    "box_7": "storage",
+    "box_8": "storage",
+    "bubble_wrap": "storage",
+    "object_wrapped_in_foil": "storage",
+    "garbage_bags": "storage",
+    "cables_in_transparent_bag": "storage",
+    "light_bulb": "household_item",
+    "cables": "household_item",
+    "sponge": "household_item",
+    "airfilter": "household_item",
+    "lighters": "household_item",
+    "tape": "household_item",
+    "crayons": "household_item",
+    "marker_big": "household_item",
+    "marker_small": "household_item",
+    "glasses": "household_item",
+    "woodcube_a": "household_item",
+    "woodblock_a": "household_item",
+    "woodblock_b": "household_item",
+    "woodblock_c": "household_item"
+}
+
+############################################################################################
+
+CLASS2ID_pre = {
+    "cracker_box": 97.0,
+    "sugar_box": 1.0,
+    "tomato_soup_can": 2.0,
+    "mustard_bottle": 3.0,
+    "potted_meat_can": 4.0,
+    "banana": 5.0,
+    "round_fruit": 6.0,
+    "toy_airplane": 7.0,
+    "power_drill": 8.0,
+    "thin_tool": 9.0,
+    "product": 10.0,
+    "small_object": 11.0,
+    "tableware": 12.0,
+    "glass": 13.0,
+    "white_box": 14.0,
+    "pear": 15.0,
+    "dark_box": 16.0,
+    "clamp": 17.0,
+    "wrap": 18.0,
+    "marker": 19.0,
+    "spray": 20.0,
+    "racquetball": 21.0,
+    "b_cups": 22.0,
+    "d_cups": 23.0,
+    "f_toy_airplane": 27.0,
+    "h_toy_airplane": 28.0,
+    "k_toy_airplane": 31.0,
+    "cables_in_transparent_bag": 37.0,
+    "cables": 38.0,
+    "wire_cutter": 39.0,
+    "handcream": 42.0,
+    "toothpaste": 43.0,
+    "toydog": 44.0,
+    "sponge": 45.0,
+    "pneumatic_cylinder": 46.0,
+    "airfilter": 47.0,
+    "wash_glove": 49.0,
+    "wash_sponge": 50.0,
+    "garbage_bags": 51.0,
+    "deo": 52.0,
+    "shaving_cream": 56.0,
+    "chewing_gum_with_spray": 57.0,
+    "lighters": 58.0,
+    "cream_soap": 59.0,
+    "tennis_ball": 69.0,
+    "handsaw": 72.0,
+    "lipcare": 73.0,
+    "woodcube_a": 74.0,
+    "nosespray": 76.0,
+    "tape": 77.0,
+    "glasses": 85.0,
+    "crayons": 86.0,
+    "greek_busts": 89.0,
+    "woodblock_a": 93.0,
+    "woodblock_b": 94.0,
+    "woodblock_c": 95.0,
+    "mannequin": 96.0
+}
+ID2CLASS_pre = {v: k for k, v in CLASS2ID_pre.items()}
+CAT_TO_SUPERCAT_pre = {
+    "a_toy_airplane": "toy_airplane",
+    "c_toy_airplane": "toy_airplane",
+    "apple": "round_fruit",
+    "lemon": "round_fruit",
+    "peach": "round_fruit",
+    "orange": "round_fruit",
+    "plum": "round_fruit",
+    "strawberry": "round_fruit",
+    "bowl": "tableware",
+    "mug": "tableware",
+    "knife": "thin_tool",
+    "phillips_screwdriver": "thin_tool",
+    "flat_screwdriver": "thin_tool",
+    "h_toy_airplane": "small_object",
+    "d_toy_airplane": "small_object",
+    "i_toy_airplane": "small_object",
+    "j_toy_airplane": "small_object",
+    "glass_cup": "glass",
+    "wineglass": "glass",
+    "light_bulb": "glass",
+    "bottle_glass": "glass",
+    "box_1": "white_box",
+    "box_2": "white_box",
+    "box_3": "white_box",
+    "box_4": "white_box",
+    "box_5": "white_box",
+    "box_8": "white_box",
+    "box_6": "dark_box",
+    "box_7": "dark_box",
+    "desinfection": "spray",
+    "hairspray": "spray",
+    "marker_big": "marker",
+    "marker_small": "marker",
+    "lipstick": "marker",
+    "cat_milk": "product",
+    "coffeefilter": "product",
+    "clamp": "clamp",
+    "clamp_small": "clamp",
+    "clamp_big": "clamp",
+    "object_wrapped_in_foil": "wrap",
+    "bubble_wrap": "wrap"
+}
+
+ID2COLOR_pre = {
+    97.0: [1.0, 0.0, 0.0],    # cracker_box: Red
+    1.0: [0.0, 1.0, 0.0],     # sugar_box: Green
+    2.0: [0.0, 0.0, 1.0],     # tomato_soup_can: Blue
+    3.0: [1.0, 1.0, 0.0],     # mustard_bottle: Yellow
+    4.0: [1.0, 0.5, 0.0],     # potted_meat_can: Orange
+    5.0: [0.5, 1.0, 0.5],     # banana: Light Green
+    6.0: [0.5, 0.5, 1.0],     # round_fruit: Light Blue
+    7.0: [1.0, 0.0, 1.0],     # toy_airplane: Magenta
+    8.0: [0.5, 0.0, 0.5],     # power_drill: Purple
+    9.0: [0.0, 1.0, 1.0],     # thin_tool: Cyan
+    10.0: [0.6, 0.3, 0.2],    # product: Brown
+    11.0: [0.8, 0.6, 0.4],    # small_object: Tan
+    12.0: [1.0, 0.8, 0.8],    # tableware: Pink
+    13.0: [0.7, 0.7, 0.7],    # glass: Gray
+    14.0: [1.0, 1.0, 1.0],    # white_box: White
+    15.0: [0.0, 0.0, 0.0],    # pear: Black
+    16.0: [0.4, 0.2, 0.0],    # dark_box: Dark Brown
+    17.0: [0.3, 0.3, 0.7],    # clamp: Slate Blue
+    18.0: [0.7, 0.4, 0.4],    # wrap: Dusky Pink
+    19.0: [0.5, 0.2, 0.8],    # marker: Violet
+    20.0: [0.4, 0.7, 0.4],    # spray: Moss Green
+    21.0: [0.9, 0.9, 0.3],    # racquetball: Golden Yellow
+    22.0: [0.2, 0.6, 0.8],    # b_cups: Aquamarine
+    23.0: [0.8, 0.2, 0.6],    # d_cups: Plum
+    27.0: [0.3, 0.8, 0.5],    # f_toy_airplane: Mint Green
+    28.0: [0.6, 0.3, 0.8],    # h_toy_airplane: Lavender
+    31.0: [0.9, 0.6, 0.2],    # k_toy_airplane: Amber
+    37.0: [0.5, 0.5, 0.5],    # cables_in_transparent_bag: Medium Gray
+    38.0: [0.8, 0.5, 0.1],    # cables: Burnt Orange
+    39.0: [0.3, 0.3, 0.3],    # wire_cutter: Charcoal Gray
+    42.0: [1.0, 0.6, 0.6],    # handcream: Light Coral
+    43.0: [0.2, 0.8, 1.0],    # toothpaste: Sky Blue
+    44.0: [0.8, 0.4, 0.2],    # toydog: Terracotta
+    45.0: [0.4, 0.6, 0.8],    # sponge: Steel Blue
+    46.0: [0.6, 0.6, 1.0],    # pneumatic_cylinder: Light Periwinkle
+    47.0: [0.6, 0.8, 0.6],    # airfilter: Pastel Green
+    49.0: [1.0, 0.8, 0.4],    # wash_glove: Light Gold
+    50.0: [0.8, 0.8, 0.2],    # wash_sponge: Mustard Yellow
+    51.0: [0.5, 0.5, 0.0],    # garbage_bags: Olive Green
+    52.0: [0.2, 0.5, 0.2],    # deo: Forest Green
+    56.0: [0.9, 0.7, 0.4],    # shaving_cream: Apricot
+    57.0: [0.6, 0.9, 0.6],    # chewing_gum_with_spray: Light Mint
+    58.0: [1.0, 0.5, 0.0],    # lighters: Bright Orange
+    59.0: [0.7, 0.9, 0.7],    # cream_soap: Mint
+    69.0: [0.9, 0.9, 0.9],    # tennis_ball: Very Light Gray
+    72.0: [0.3, 0.4, 0.7],    # handsaw: Indigo
+    73.0: [0.9, 0.7, 0.8],    # lipcare: Pale Pink
+    74.0: [0.8, 0.7, 0.5],    # woodcube_a: Beige
+    76.0: [0.3, 0.6, 0.3],    # nosespray: Medium Green
+    77.0: [0.7, 0.3, 0.3],    # tape: Rust Red
+    85.0: [0.9, 0.9, 0.6],    # glasses: Pale Yellow
+    86.0: [0.6, 0.3, 0.6],    # crayons: Mauve
+    89.0: [0.8, 0.8, 1.0],    # greek_busts: Pale Lavender
+    93.0: [0.5, 0.4, 0.3],    # woodblock_a: Wood Brown
+    94.0: [0.6, 0.5, 0.4],    # woodblock_b: Light Brown
+    95.0: [0.7, 0.6, 0.5],    # woodblock_c: Tan
+    96.0: [0.8, 0.8, 0.9],    # mannequin: Soft Gray
+}
+
+############################################################################################
+
 def get_viewpoints(dir):
     viewpoints = {}   
     for file in os.listdir(dir):
