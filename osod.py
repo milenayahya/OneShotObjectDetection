@@ -297,7 +297,7 @@ def find_embeddings(
     """
     from transformers import OwlViTForObjectDetection, OwlViTProcessor
     model = OwlViTForObjectDetection.from_pretrained("google/owlvit-base-patch16").to("cuda")
-    proc    essor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch16")
+    processor = OwlViTProcessor.from_pretrained("google/owlvit-base-patch16")
     """
     query_embeddings = []
     first_token = []
@@ -316,7 +316,9 @@ def find_embeddings(
         ).pixel_values.to(device)
         with torch.no_grad(): # Off when finetuning
             pooled_output, image_features = model.get_image_features(source_pixel_values, return_dict = True)
+            print("pooled_output shape: ", pooled_output.shape)
             pooled_output = model.class_predictor(pooled_output)[1]
+            print("pooled_output shape: ", pooled_output.shape)
             query_embeddings.append(image_features)
             first_token.append(pooled_output)
 
@@ -328,15 +330,13 @@ def zero_shot_detection(
     processor: Owlv2Processor,
     args: "RunOptions",
     writer: Optional[SummaryWriter],
-    crop: List[int] = None,
+    cls: List[int] = None,
 )-> Union[Tuple[List[int], List[np.ndarray], List[str]], None]:
 
     """
     Perform zero-shot detection on a batch of query images.
 
     """
-    
-
     if args.data == "COCO":
         from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     elif args.data == "MGN":
@@ -352,13 +352,8 @@ def zero_shot_detection(
     indexes = []
     all_data = []
 
-    if crop is None:
-        crop = [0] * len(images)
-    
-    if np.all(crop == 1):
-        logger.info("All images are cropped")
-        query_embeddings, first_token = find_embeddings(images, model, processor, args)
-        return indexes, query_embeddings, classes 
+    if cls is None:
+        cls = [0] * len(images)
 
 
     #start_GPUtoCPU = torch.cuda.Event(enable_timing=True)
@@ -403,6 +398,7 @@ def zero_shot_detection(
                 #start_GPUtoCPU.record()
                 current_objectnesses = torch.sigmoid(objectnesses.detach())
                 current_class_embeddings = source_class_embedding.detach()
+                current_boxes = source_boxes.detach()
                 #end_GPUtoCPU.record()
                 #torch.cuda.synchronize()
                 #time_total = start_GPUtoCPU.elapsed_time(end_GPUtoCPU)
@@ -411,30 +407,49 @@ def zero_shot_detection(
                
                 # Extract the query embedding for the current images based on the provided index
                 for i in range(batch_size):
-                    if crop[batch_start + i] == 0:
+                    if cls[batch_start + i] == 0:
                         max_index = torch.argmax(current_objectnesses[i])
                         indexes.append(max_index.cpu().item())
                         query_embedding = current_class_embeddings[i, max_index]
-                    else:
-                        indexes.append(None)  # No specific index for uncropped images
-                        #query_embedding = current_class_embeddings[i]
-                        query_embedding = torch.mean(current_class_embeddings[i], dim=0)
+                    
+                    # if selecting cls token, take from the max objectness boxes, the one that has maximum area 
+                    elif cls[batch_start + i] == 1:
+                        #first find max objectness box
+                        idx_obj = torch.argmax(current_objectnesses[i])
+                        box_obj = current_boxes[i, idx_obj]
+                        area_obj = box_obj[2] * box_obj[3]
 
+                        #find max area box
+                        topk_indices = torch.topk(current_objectnesses[i], args.topk_query).indices
+                        topk_boxes = current_boxes[i,topk_indices]
+                        areas = [box[2] * box[3] for box in topk_boxes]
+                        max_area_index = torch.argmax(torch.tensor(areas))
+                        max_area = areas[max_area_index]
+                        objectness = round(float(current_objectnesses[i, topk_indices[max_area_index]]),2)      
+
+                        #first check: threshold max_area_box on objectness score 
+                        if objectness < 0.1 or (area_obj/max_area) <= 0.7:
+                            indexes.append(idx_obj.cpu().item())
+                            query_embedding = current_class_embeddings[i, idx_obj]
+
+                        else:
+                            idx = topk_indices[max_area_index]
+                            indexes.append(idx.cpu().item()) 
+                            query_embedding = current_class_embeddings[i, idx]
+                    
+                    
                     query_embeddings.append(query_embedding)
+
             pbar.update(1)
 
-    file = os.path.join(query_dir, f"objectness_indexes_{args.data}.json")
+    file = os.path.join(query_dir, f"objectness_indexes_{args.comment}.json")
     with open(file, 'w') as f:
         json.dump(all_data, f, indent=4)
 
     if not args.manual_query_selection:
-        writer.add_text("indexes of query objects", str(indexes))
-        writer.add_text("classes of query objects", str(classes) )
-        logger.info("Finished extracting the query embeddings")
-        writer.flush()
-        logger.info("Zero-shot detection completed")
 
-        if args.topk_query > 1:
+        """
+        if args.k_shot > 1:
             class_embeddings_dict = {}
 
             # Group queries of same class together
@@ -449,6 +464,15 @@ def zero_shot_detection(
                 average_embedding = torch.mean(torch.stack(embeddings), dim=0)
                 query_embeddings.append(average_embedding)
                 classes.append(class_label)
+
+        """
+        writer.add_text("indexes of query objects", str(indexes))
+        writer.add_text("classes of query objects", str(classes) )
+        logger.info("Finished extracting the query embeddings")
+        writer.flush()
+        logger.info("Zero-shot detection completed")
+
+        
 
         return indexes, query_embeddings, classes
 
@@ -488,11 +512,17 @@ def find_query_patches_batches(
     Allows manual selection of query object in query image based on index.
 
     """
+    if args.data == "COCO":
+        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "MGN":
+        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "Logos":
+        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
     query_embeddings = []
     images, classes = zip(*load_query_image_group(args))
     images = list(images)
     classes = list(classes)
-
+    classes = [CLASS2ID[class_name] for class_name in classes]
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     print(f"Using device: {device}")
@@ -645,10 +675,10 @@ def one_shot_detection_batches(
             reshaped_feature_map = feature_map.view(b, h * w, d)
 
             # if queries obtained by 0 shot
-            #query_embeddings_tensor = torch.stack(query_embeddings) # Shape: (num_batches, batch_size, hidden_size)
+            query_embeddings_tensor = torch.stack(query_embeddings) # Shape: (num_batches, batch_size, hidden_size)
 
             # if queries obtained by cls token
-            query_embeddings_tensor = torch.cat(query_embeddings,dim=0)
+            #query_embeddings_tensor = torch.cat(query_embeddings,dim=0)
 
             #  if only one query
             #query_embeddings_tensor = query_embeddings[0]
@@ -734,6 +764,7 @@ def one_shot_detection_batches(
                 )  
             if(len(nms_boxes_coco) == 0):
                 logger.info("No boxes detected in the image")
+                return 
                 
             # Collect results in COCO format
             for idx, (box, score, cls, img_idx) in enumerate(zip(nms_boxes_coco, nms_scores, nms_classes, nms_image_indices)):
@@ -797,10 +828,10 @@ if __name__ == "__main__":
 
     options = RunOptions(
         mode = "test",
-        source_image_paths= os.path.join(query_dir, "FT"),
-        target_image_paths= os.path.join(test_dir, "FT"), 
+        source_image_paths= os.path.join(query_dir, "Comau_cropped"),
+        target_image_paths= os.path.join(test_dir, "Comau/3D"), 
         data="MGN",
-        comment="cls_ft_3_2", 
+        comment="test_cls", 
         query_batch_size=8, 
         manual_query_selection=False,
         confidence_threshold= 0.95,
@@ -816,29 +847,29 @@ if __name__ == "__main__":
     # Image-Conditioned Object Detection
     writer = SummaryWriter(comment=options.comment)
     model = options.model.from_pretrained(options.backbone)
-    model.load_state_dict(torch.load("model-FT-3_2.pth"))
+  #  model.load_state_dict(torch.load("model-FT-3_2.pth"))
     processor = options.processor.from_pretrained(options.backbone)
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
     print(torch.cuda.is_available())
-  #  print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
+    print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
     
-    
-    crop = np.ones(3)
-    #crop = np.ones(20)
+    #cls = [0] * 12
+    cls = [1] * 12
     # Find the objects in the query images
     if options.manual_query_selection:
-        zero_shot_detection(model, processor, options, writer)
+      #  zero_shot_detection(model, processor, options, writer)
 
-        categories = ["coffeefilter", "cat_milk"]
-        idx = [1216, 1743]
+        categories = ["sugar_box", "wineglass"]
+        idx = [1689, 2166]
 
         indexes = modify_max_objectness_indices(
-            os.path.join(query_dir, f"objectness_indexes_{options.data}.json"), 
+            os.path.join(query_dir, f"objectness_indexes_again.json"), 
             categories, 
             idx)
         indexes = [v for k, v in indexes.items()]
+        print("Indexes:", indexes)
         query_embeddings, classes = find_query_patches_batches(
             model, processor, options, indexes, writer
         )
@@ -849,9 +880,10 @@ if __name__ == "__main__":
             processor,
             options,
             writer,
-            crop
+            cls
             
         )
+    
     
     
     
@@ -860,23 +892,20 @@ if __name__ == "__main__":
         json.dump(classes, f)
 
     if device.type == "cpu":
-        print("Yes")
+        print("Query embeddings are on CPU")
         query_embeddings = [embedding.cpu().numpy() for embedding in query_embeddings]
 
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
+    
 
-
-
+    
     file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
 
-    # Load the list of tensors onto the GPU
     query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
-    print("query embedding type:", type(query_embeddings))
-    print("query embedding shape:", query_embeddings[0].shape)
-    print("query embedding length:", len(query_embeddings))
+   
     # Detect query objects in test images
     coco_results = one_shot_detection_batches(
         model,
@@ -888,7 +917,17 @@ if __name__ == "__main__":
         per_image=False
     )
     
-    filepath = os.path.join(results_dir, f"results_{options.comment}.json")
-    visualize_results(filepath, writer, per_image=False, args=options, random_selection=None)
-   
-    
+    if coco_results is not None:
+        filepath = os.path.join(results_dir, f"results_{options.comment}.json")
+        visualize_results(filepath, writer, per_image=False, args=options, random_selection=None)
+
+    """
+ # Load the list of tensors onto the GPU
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
+    query_embeddings = torch.stack(query_embeddings)
+    query_embeddings1 = torch.load(f'Queries/query_embeddings_standard_gpu.pth', map_location=device)
+    query_embeddings1 = torch.stack(query_embeddings1)
+    cos_sim = torch.nn.functional.cosine_similarity(query_embeddings, query_embeddings1, dim=1)
+    print("Cosine similarity between case 1 and case 2 embeddings:", cos_sim)
+
+    """
