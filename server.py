@@ -7,8 +7,41 @@ import torch
 import json
 import os
 import struct
-from osod import zero_shot_detection, one_shot_detection_batches, find_query_patches_batches, visualize_results
+from osod import zero_shot_detection, one_shot_detection_batches, find_query_patches_batches, visualize_results, add_query
 from config import query_dir, test_dir, results_dir
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
+from threading import Lock
+
+class ImageHandler(FileSystemEventHandler):
+    def __init__(self, model, processor, options, query_embeddings, classes, writer, cls, lock):
+        self.model = model
+        self.processor = processor
+        self.options = options
+        self.query_embeddings = query_embeddings
+        self.classes = classes
+        self.writer = writer
+        self.cls = cls
+        self.lock = lock
+
+    def on_created(self, event):
+        if event.is_directory:
+            return
+        if event.src_path.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
+            print(f"New query image detected: {event.src_path}")
+            with self.lock:
+                self.query_embeddings, self.classes = add_query(
+                    self.model,
+                    self.processor,
+                    self.options,
+                    event.src_path,
+                    self.query_embeddings,
+                    self.classes,
+                    self.writer,
+                    self.cls
+                )
+                print("Updated query_embeddings and classes.")
+
 
 def receive_all(connection, size):
     data = b''
@@ -32,11 +65,14 @@ def save_image(data, dir, filename):
 
 def signal_handler(sig, frame):
     print('Shutting down server...')
-    sock.close()
+    observer.stop()  # Stop the watchdog observer
+    observer.join()  # Wait for the observer thread to finish
+    sock.close()     # Close the socket only after stopping the observer
     sys.exit(0)
 
 def zero_shot():
-     # Find the objects in the query images
+    # Find the objects in the query images
+    cls = [1]*12
     if options.manual_query_selection:
         zero_shot_detection(model, processor, options, writer)
         #indexes = [1523, 1700, 1465, 1344]
@@ -50,14 +86,17 @@ def zero_shot():
             model,
             processor,
             options,
-            writer
+            writer,
+            cls
         )
 
-    with open("classes.json", 'w') as f:
+    with open(f"Queries\\classes_{options.comment}.json", 'w') as f:
         json.dump(classes, f)
 
     # Save the list of GPU tensors to a file
-    torch.save(query_embeddings, 'query_embeddings_gpu.pth')
+    torch.save(query_embeddings, f"Queries\\query_embeddings_{options.comment}_gpu.pth")
+
+    return query_embeddings, classes
 
 def send_predictions(connection, predictions):
     # Serialize predictions to JSON
@@ -70,7 +109,8 @@ def send_predictions(connection, predictions):
     # Send the JSON string
     connection.sendall(predictions_json.encode('utf-8'))
 
-
+# Lock for shared resource protection
+lock = Lock()
 dir = "received_images/"
 if not os.path.exists(dir):
     os.makedirs(dir)
@@ -81,6 +121,9 @@ writer = SummaryWriter(comment=options.comment)
 model = options.model.from_pretrained(options.backbone)
 processor = options.processor.from_pretrained(options.backbone)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+query_directory = options.source_image_paths
+
 
 if __name__ == "__main__":
 
@@ -99,76 +142,101 @@ if __name__ == "__main__":
     # Set the socket to non-blocking mode
     sock.settimeout(5)
     
-    #zero_shot()
 
     
-    file = os.path.join(query_dir, f"classes_{options.data}.json")
+    file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
 
     # Load the list of tensors onto the GPU
-    query_embeddings = torch.load(f'Queries/query_embeddings_{options.data}_gpu.pth', map_location=device)
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
+    
+   # query_embeddings, classes = zero_shot()
+    cls = [0]
+
+    # Create an observer to watch for new query images
+    event_handler = ImageHandler(model, processor, options, query_embeddings, classes, writer, cls, lock)
+    observer = Observer()
+    observer.schedule(event_handler, path=query_directory, recursive=False)
+    observer.start()
+
+    file = os.path.join(query_dir, f"classes_{options.comment}.json")
+    with open(file, 'r') as f:
+        classes = json.load(f)
+
+    # Load the list of tensors onto the GPU
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
     
 
     counter = 0
     initial_batch_processed = False
 
-    while True: 
-        try:
-            print('waiting for a connection')
-            connection, client_address = sock.accept()
-            print('connection from', client_address)
-        
+    try:
+        while True: 
+            try:
+                print('waiting for a connection')
+                connection, client_address = sock.accept()
+                print('connection from', client_address)
+            
 
-            while True:
-                # Receive the size of the image
-                size_data = receive_all(connection, struct.calcsize('!I'))
-                if not size_data:
-                    break
-                size = struct.unpack('!I', size_data)[0]
+                while True:
+                    # Receive the size of the image
+                    size_data = receive_all(connection, struct.calcsize('!I'))
+                    if not size_data:
+                        break
+                    size = struct.unpack('!I', size_data)[0]
 
-                # Receive the image data
-                image_data = receive_all(connection, size)
-                if not image_data:
-                    break
+                    # Receive the image data
+                    image_data = receive_all(connection, size)
+                    if not image_data:
+                        break
 
-                # Save the image
-                filename = f'img_{counter}.jpg'
-                path = save_image(image_data, dir, filename)
-                counter += 1
+                    # Save the image
+                    filename = f'img_{counter}.jpg'
+                    path = save_image(image_data, dir, filename)
+                    counter += 1
 
-                options.target_image_paths = path   # the path used in osod.py visualize_results
+                    options.target_image_paths = path   # the path used in osod.py visualize_results
+
+                    with lock:  
+                        current_query_embeddings = query_embeddings
+                        current_classes = classes
+
+                    # Perform one-shot detection for new images
                 
-                # Perform one-shot detection for new images
-                id, predictions= one_shot_detection_batches(
-                    model,
-                    processor,
-                    query_embeddings,
-                    classes,
-                    options,
-                    writer,
-                    per_image=True
-                )
+                    id, predictions= one_shot_detection_batches(
+                        model=model,
+                        processor=processor,
+                        args=options,
+                        writer=writer,
+                        query_embeddings = current_query_embeddings,
+                        classes = current_classes,
+                        per_image=True
+                    )
 
-                
-                # Send predictions back to the client
-                send_predictions(connection, predictions)
-                writer.add_text("Predictions", json.dumps(predictions))
-                if options.visualize_test_images:
-                    filepath = os.path.join(results_dir, f"results_{id}.json")
-                    visualize_results(filepath, writer, per_image=True, args=options, random_selection=None)
-                
-                
-                print(f'Sent predictions for {filename}')
+                    
+                    # Send predictions back to the client
+                    send_predictions(connection, predictions)
+                    writer.add_text("Predictions", json.dumps(predictions))
+                    if options.visualize_test_images:
+                        filepath = os.path.join(results_dir, f"results_{id}.json")
+                        visualize_results(filepath, writer, per_image=True, args=options, random_selection=None)
+                    
+                    
+                    print(f'Sent predictions for {filename}')
 
 
-        except socket.timeout:
-            continue
-        except KeyboardInterrupt:
-            print('Shutting down server...')
-            sock.close()
-            sys.exit(0)
-        finally:
-            # Clean up the connection
-            if 'connection' in locals():
-                connection.close()
+
+            except socket.timeout:
+                continue
+            except KeyboardInterrupt:
+                print('Shutting down server...')
+                break
+    finally:
+        observer.stop()
+        observer.join()
+        sock.close()
+        sys.exit(0)
+        # Clean up the connection
+        if 'connection' in locals():
+            connection.close()

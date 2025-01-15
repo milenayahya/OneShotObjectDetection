@@ -1,9 +1,9 @@
 {
     "mode": "test",
     "backbone": "google/owlv2-base-patch16-ensemble",
-    "source_image_paths": "Queries/MGN_query_set",
+    "source_image_paths": "Queries/Comau_cropped",
     "data": "MGN",
-    "target_image_paths": "Test_Images/",
+    "target_image_paths": "Test/Comau/3D",
     "comment": "interface_test",
     "query_batch_size": 8,
     "test_batch_size": 8,
@@ -15,5 +15,8 @@
     "visualize_query_images": true,
     "visualize_test_images": true,
     "nms_threshold": 0.3,
-    "nms_between_classes": true
+    "nms_between_classes": false,
+    "write_to_file_freq": 5,
+    "generalize_categories": false,
+    "use_supercategories": false
 }

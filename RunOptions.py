@@ -59,7 +59,7 @@ class RunOptions:
             mode = args.mode,
             model = args.model,
             processor = args.processor,
-            backbone=args.backbone,
+            backbone= args.backbone,
             data = args.data,
             source_image_paths=args.source_image_paths,
             target_image_paths=args.target_image_paths,

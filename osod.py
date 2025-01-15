@@ -5,6 +5,8 @@ import torch
 import numpy as np
 import os
 import cv2 
+import matplotlib
+matplotlib.use('Agg')
 from matplotlib import rcParams
 import matplotlib.pyplot as plt
 from scipy.special import expit as sigmoid
@@ -21,6 +23,7 @@ from config import PROJECT_BASE_PATH, query_dir, results_dir, test_dir
 from torchvision.ops import batched_nms
 import tensorflow as tf
 from utils import  get_preprocessed_image, convert_from_x1y1x2y2_to_coco, create_image_id_mapping, save_results, get_filename_by_index, map_coco_ids, read_results
+
 
 class ModelOutputs:
     def __init__(self, logits, pred_boxes):
@@ -183,6 +186,8 @@ def visualize_objectnesses_batch(
         ax.set_axis_off()
 
         image_idx = batch_start + idx 
+        if isinstance(classes, float):
+            classes = [classes]
         category = classes[image_idx]
 
         data = {
@@ -326,18 +331,8 @@ def find_embeddings(
    # print("CLS token: ", query_embeddings)
     return query_embeddings, first_token
 
-def zero_shot_detection(
-    model: Owlv2ForObjectDetection,
-    processor: Owlv2Processor,
-    args: "RunOptions",
-    writer: Optional[SummaryWriter],
-    cls: List[int] = None,
-)-> Union[Tuple[List[int], List[np.ndarray], List[str]], None]:
+def prepare_query_images(args):
 
-    """
-    Perform zero-shot detection on a batch of query images.
-
-    """
     if args.use_supercategories:
         from mgn_preprocess import CLASS2ID_pre as CLASS2ID
     elif args.data == "COCO":
@@ -347,19 +342,86 @@ def zero_shot_detection(
     elif args.data == "Logos":
         from logos_preprocess import CLASS2ID
 
-    source_class_embeddings = []
     images, classes = zip(*load_query_image_group(args))
     images = list(images)
     classes = list(classes)
     classes = [CLASS2ID[class_name] for class_name in classes]
+
+    return images, classes
+
+def prepare_query_image(args, img_path):
+    if args.data == "COCO":
+        from coco_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "MGN":
+        from mgn_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+    elif args.data == "Logos":
+        from logos_preprocess import ID2CLASS, CLASS2ID, ID2COLOR
+
+    if img_path.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
+        img_name = os.path.basename(img_path)
+        category = ID2CLASS[float(img_name.split("_")[0])]
+        img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
+        if args.use_supercategories:
+                from mgn_preprocess import CAT_TO_SUPERCAT_pre
+                if category in CAT_TO_SUPERCAT_pre:
+                    category = CAT_TO_SUPERCAT_pre[category]
+        category = CLASS2ID[category]
+        img = [img]
+
+    return img, category
+    
+def add_query(model, processor, args, img_path, query_embeddings, classes, writer, cls):
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+    idx, query_embed, cat = zero_shot_detection(model, processor, args, writer, cls, img_path= img_path, per_image=True)
+
+    query_embeddings.append(query_embed)
+    classes.append(cat)  
+
+    file = os.path.join(query_dir, f"classes_{args.comment}.json")
+    with open(file, 'w') as f:
+        json.dump(classes, f)
+
+    if device.type == "cpu":
+        print("Query embeddings are on CPU")
+        query_embeddings = [embedding.cpu().numpy() for embedding in query_embeddings]
+
+    # Save the list of GPU tensors to a file
+    torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{args.comment}_gpu.pth'))
+   
+
+    return query_embeddings, classes
+    
+
+def zero_shot_detection(
+    model: Owlv2ForObjectDetection,
+    processor: Owlv2Processor,
+    args: "RunOptions",
+    writer: Optional[SummaryWriter],
+    cls: List[int] = None,
+    img_path= None,
+    per_image= False,
+)-> Union[Tuple[List[int], List[np.ndarray], List[str]], None]:
+
+    """
+    Perform zero-shot detection on a batch of query images.
+
+    """
     query_embeddings = []
     indexes = []
     all_data = []
+    source_class_embeddings = []
+
+    if per_image== False:
+        images, classes = prepare_query_images(args)
+    else:
+        images, classes = prepare_query_image(args, img_path)
 
     if cls is None:
         cls = [0] * len(images)
 
-
+    
     #start_GPUtoCPU = torch.cuda.Event(enable_timing=True)
     #end_GPUtoCPU = torch.cuda.Event(enable_timing=True)
 
@@ -391,7 +453,7 @@ def zero_shot_detection(
                 source_class_embedding = model.class_predictor(image_features)[1]
                 source_class_embeddings.append(source_class_embedding)
     
-            
+            print("len of image batch: ", len(image_batch))
             if args.visualize_query_images:
                 visualize_objectnesses_batch(
                    args, image_batch, source_boxes.cpu(), source_pixel_values.cpu(), objectnesses.cpu(), batch_start, classes, all_data, writer
@@ -838,7 +900,9 @@ def map_supercategories(results_file):
             f.write("\n")
     
     return 
-    
+
+   
+
 
 if __name__ == "__main__":
     
@@ -856,10 +920,10 @@ if __name__ == "__main__":
 
     options = RunOptions(
         mode = "test",
-        source_image_paths= os.path.join(query_dir, "MGN_query_set"),
+        source_image_paths= os.path.join(query_dir, "5"),
         target_image_paths= os.path.join(test_dir, "MGN/MGN_subset"), 
         data="MGN",
-        comment="supercats", 
+        comment="debug", 
         query_batch_size=8, 
         manual_query_selection=False,
         confidence_threshold= 0.95,
@@ -871,7 +935,7 @@ if __name__ == "__main__":
         nms_threshold=0.3,
         write_to_file_freq=5,
         generalize_categories= False,
-        use_supercategories= True
+        use_supercategories= False
     )
 
     # Image-Conditioned Object Detection
@@ -884,8 +948,30 @@ if __name__ == "__main__":
     
     print(torch.cuda.is_available())
     print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
+
+
+    file = os.path.join(query_dir, f"classes_subset_5_shot.json")
+    with open(file, 'r') as f:
+        classes = json.load(f)
+
+    queries = torch.load(f'Queries/query_embeddings_subset_5_shot_gpu.pth', map_location=device)
+   
+    cls = 0
+    img_path = "Queries/Comau/7_mug_1.png"
+    query_embeddings, classes = add_query(model,
+        processor,
+        options,
+        img_path,
+        queries,
+        classes,
+        writer,
+        cls
+    )
+    print("Classes: ", classes)
+    print("lenght of query embeds: ", len(query_embeddings))
+                               
     
-    
+    """
     #cls = [0] * 12
     #cls = [1] * 12
     # Find the objects in the query images
@@ -950,7 +1036,7 @@ if __name__ == "__main__":
         filepath = os.path.join(results_dir, f"results_{options.comment}.json")
         visualize_results(filepath, writer, per_image=False, args=options, random_selection=None)
 
-    """
+    
  # Load the list of tensors onto the GPU
     query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
     query_embeddings = torch.stack(query_embeddings)
