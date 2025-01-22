@@ -228,9 +228,11 @@ if __name__ == '__main__':
     #resFile = "Results/results_coco_subset_tuned.json"   # Results file for the subset of the test set
     #resFile = "Results/results_imgnet_coco_subset.json"   # Results file for the subset of the test set using \5 imgnet queries
     #resFile = "Results/results_MGN_val_run.json"  
-    resFile = "Results/results_MGN_subset.json"
-    resFile = "Results/results_5_shot.json"
-
+    #resFile = "Results/results_MGN_subset.json"
+    resFile = "Results/results_MGN_5_shot.json"
+    modify_json_lines(resFile)
+    resFile = "testMGN.json" 
+    
     cat_ap = evaluate(annFile, resFile, plot_pr = False, per_category = True)
    
     print("\nCategories with AP < 0.1:")

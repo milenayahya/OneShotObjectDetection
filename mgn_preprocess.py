@@ -414,7 +414,7 @@ ID2COLOR_pre = {
     11.0: [0.8, 0.6, 0.4],    # small_object: Tan
     12.0: [1.0, 0.8, 0.8],    # tableware: Pink
     13.0: [0.7, 0.7, 0.7],    # glass: Gray
-    14.0: [1.0, 1.0, 1.0],    # white_box: White
+    14.0: [0.7, 0.7, 0.7],    # white_box: White
     15.0: [0.0, 0.0, 0.0],    # pear: Black
     16.0: [0.4, 0.2, 0.0],    # dark_box: Dark Brown
     17.0: [0.3, 0.3, 0.7],    # clamp: Slate Blue

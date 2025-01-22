@@ -1,4 +1,5 @@
 import socket
+import numpy as np
 import sys
 import signal
 from RunOptions import RunOptions
@@ -109,6 +110,28 @@ def send_predictions(connection, predictions):
     # Send the JSON string
     connection.sendall(predictions_json.encode('utf-8'))
 
+def find_grasping_points(data, predictions):
+    # Get the grasping points for each object
+    grasping_points = []
+    for i, pred in enumerate(predictions):
+        # Get the bounding box for the object
+        bbox = pred['bbox']
+        category = pred['category_id']
+        x, y, w, h = bbox
+        
+        # compute centroid
+        cx, cy = int(x + w/2), int(y + h/2)
+
+        # find xyz and nx ny nz
+        grasping_point = [d[cy,cx,0] for d in data]
+        grasping_point.append(category)
+        grasping_points.append(grasping_point)
+
+    # sort by increasing value of z
+    grasping_points = sorted(grasping_points, key=lambda x: x[2])
+    
+    return grasping_points  
+
 # Lock for shared resource protection
 lock = Lock()
 dir = "received_images/"
@@ -167,11 +190,9 @@ if __name__ == "__main__":
     # Load the list of tensors onto the GPU
     query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
     
-
-    counter = 0
     initial_batch_processed = False
 
-    try:
+    try:    
         while True: 
             try:
                 print('waiting for a connection')
@@ -184,17 +205,36 @@ if __name__ == "__main__":
                     size_data = receive_all(connection, struct.calcsize('!I'))
                     if not size_data:
                         break
-                    size = struct.unpack('!I', size_data)[0]
+                    w = struct.unpack('!I', size_data)[0]
+                    connection.sendall(b'w')
+
+                    size_data = receive_all(connection, struct.calcsize('!I'))
+                    if not size_data:
+                        break
+                    h = struct.unpack('!I', size_data)[0]
+                    connection.sendall(b'h')
 
                     # Receive the image data
-                    image_data = receive_all(connection, size)
+                    image_data = receive_all(connection, w*h*3) # 3 channels for RGB
                     if not image_data:
                         break
+                    connection.sendall(b'rgb')
 
+
+                    data = []
+                    for i in range(6):
+                        d =  receive_all(connection, w*h*4) # 4 bytes for each float
+                        if not d:
+                            break
+                        d = np.frombuffer(d, dtype=np.float32)
+                        d.reshape(h,w,1)
+                        data.append(d)
+                        connection.sendall(b'float')
+
+                        
                     # Save the image
-                    filename = f'img_{counter}.jpg'
+                    filename = f'test_image.jpg'
                     path = save_image(image_data, dir, filename)
-                    counter += 1
 
                     options.target_image_paths = path   # the path used in osod.py visualize_results
 
@@ -214,17 +254,15 @@ if __name__ == "__main__":
                         per_image=True
                     )
 
-                    
+                    grasping_points = find_grasping_points(data, predictions)
                     # Send predictions back to the client
-                    send_predictions(connection, predictions)
+                    send_predictions(connection, grasping_points)
                     writer.add_text("Predictions", json.dumps(predictions))
                     if options.visualize_test_images:
                         filepath = os.path.join(results_dir, f"results_{id}.json")
                         visualize_results(filepath, writer, per_image=True, args=options, random_selection=None)
                     
-                    
                     print(f'Sent predictions for {filename}')
-
 
 
             except socket.timeout:

@@ -920,16 +920,16 @@ if __name__ == "__main__":
 
     options = RunOptions(
         mode = "test",
-        source_image_paths= os.path.join(query_dir, "5"),
-        target_image_paths= os.path.join(test_dir, "MGN/MGN_subset"), 
+        source_image_paths= os.path.join(query_dir, "MGN_5_shot"),
+        target_image_paths= "MGN/MGN_images",
         data="MGN",
-        comment="debug", 
+        comment="MGN_5_shot", 
         query_batch_size=8, 
         manual_query_selection=False,
-        confidence_threshold= 0.95,
+        confidence_threshold= 0.1,
         test_batch_size=8, 
-        k_shot=1,
-        topk_test= 10,
+        k_shot=5,
+        topk_test= 70,
         visualize_query_images=True,
         nms_between_classes=False,
         nms_threshold=0.3,
@@ -949,6 +949,8 @@ if __name__ == "__main__":
     print(torch.cuda.is_available())
     print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else "No GPU found")
 
+
+    """
 
     file = os.path.join(query_dir, f"classes_subset_5_shot.json")
     with open(file, 'r') as f:
@@ -971,9 +973,9 @@ if __name__ == "__main__":
     print("lenght of query embeds: ", len(query_embeddings))
                                
     
-    """
-    #cls = [0] * 12
-    #cls = [1] * 12
+    
+
+    cls = [1] * 377
     # Find the objects in the query images
     if options.manual_query_selection:
       #  zero_shot_detection(model, processor, options, writer)
@@ -997,8 +999,7 @@ if __name__ == "__main__":
             processor,
             options,
             writer,
-            
-            
+            cls            
         )
     
     
@@ -1013,13 +1014,13 @@ if __name__ == "__main__":
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
    
-
+    """
     
-    file = os.path.join(query_dir, f"classes_{options.comment}.json")
+    file = os.path.join(query_dir, f"classes_MGN_5_shot.json")
     with open(file, 'r') as f:
         classes = json.load(f)
 
-    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
+    query_embeddings = torch.load(f'Queries/query_embeddings_MGN_5_shot_gpu.pth', map_location=device)
    
     # Detect query objects in test images
     coco_results = one_shot_detection_batches(
@@ -1036,7 +1037,7 @@ if __name__ == "__main__":
         filepath = os.path.join(results_dir, f"results_{options.comment}.json")
         visualize_results(filepath, writer, per_image=False, args=options, random_selection=None)
 
-    
+    """
  # Load the list of tensors onto the GPU
     query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
     query_embeddings = torch.stack(query_embeddings)
@@ -1045,4 +1046,4 @@ if __name__ == "__main__":
     cos_sim = torch.nn.functional.cosine_similarity(query_embeddings, query_embeddings1, dim=1)
     print("Cosine similarity between case 1 and case 2 embeddings:", cos_sim)
 
-    """
+    """ 
