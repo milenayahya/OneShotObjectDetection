@@ -100,15 +100,13 @@ def zero_shot():
     return query_embeddings, classes
 
 def send_predictions(connection, predictions):
-    # Serialize predictions to JSON
-    predictions_json = json.dumps(predictions)
-    
+   
     # Send the length of the JSON string
-    size = len(predictions_json)
+    size = len(predictions)
     connection.sendall(struct.pack('!I', size))
     
     # Send the JSON string
-    connection.sendall(predictions_json.encode('utf-8'))
+    connection.sendall(predictions.encode('utf-8'))
 
 def find_grasping_points(data, predictions):
     # Get the grasping points for each object
@@ -129,6 +127,8 @@ def find_grasping_points(data, predictions):
 
     # sort by increasing value of z
     grasping_points = sorted(grasping_points, key=lambda x: x[2])
+    grasping_points = np.array(grasping_points)
+    grasping_points = np.array2string(grasping_points, separator=' ', precision=3)
     
     return grasping_points  
 
@@ -202,17 +202,21 @@ if __name__ == "__main__":
 
                 while True:
                     # Receive the size of the image
-                    size_data = receive_all(connection, struct.calcsize('!I'))
-                    if not size_data:
-                        break
-                    w = struct.unpack('!I', size_data)[0]
+                    # size_data = receive_all(connection, 1 )
+                    # if not size_data:
+                    #     break
+                    # w = struct.unpack('!I', size_data)[0]
+                    w = int(connection.recv(1024).decode())
                     connection.sendall(b'w')
+                    print(w, "GG")
 
-                    size_data = receive_all(connection, struct.calcsize('!I'))
-                    if not size_data:
-                        break
-                    h = struct.unpack('!I', size_data)[0]
+                    # size_data = receive_all(connection, struct.calcsize('!I'))
+                    # if not size_data:
+                    #     break
+                    #h = struct.unpack('!I', size_data)[0]
+                    h = int(connection.recv(1024).decode())
                     connection.sendall(b'h')
+                    print(h, "WP")
 
                     # Receive the image data
                     image_data = receive_all(connection, w*h*3) # 3 channels for RGB
