@@ -20,6 +20,7 @@ class RunOptions:
                  topk_query: int = 3,
                  topk_test: int = None,
                  k_shot: int = None,
+                 average_queries: bool = False,
                  manual_query_selection: bool = False,
                  confidence_threshold: float = 0.96,
                  visualize_query_images: bool = True,
@@ -42,6 +43,7 @@ class RunOptions:
         self.topk_query = topk_query
         self.topk_test = topk_test
         self.k_shot = k_shot
+        self.average_queries = average_queries
         self.manual_query_selection = manual_query_selection
         self.confidence_threshold = confidence_threshold
         self.visualize_query_images = visualize_query_images
@@ -69,6 +71,7 @@ class RunOptions:
             topk_query=args.topk_query,
             topk_test=args.topk_test,
             k_shot = args.k_shot,
+            average_queries=args.average_queries,
             manual_query_selection=args.manual_query_selection,
             confidence_threshold=args.confidence_threshold,
             visualize_query_images=args.visualize_query_images,
@@ -99,6 +102,7 @@ class RunOptions:
             topk_query=params["topk_query"],
             topk_test=params["topk_test"],
             k_shot=params["k_shot"],
+            average_queries=params["average_queries"],
             manual_query_selection=params["manual_query_selection"],
             confidence_threshold=params["confidence_threshold"],
             visualize_query_images=params["visualize_query_images"],
@@ -133,7 +137,9 @@ def parse_args():
     parser.add_argument("--topk_test", type=int, default=3,
                         help="Top k predictions kept in test images.")  
     parser.add_argument("--k_shot", type=int, default=3,
-                        help="K-Shot Object Detection")                   
+                        help="K-Shot Object Detection")  
+    parser.add_argument("--average_queries", type=bool, default=False,
+                        help="Average the predictions of multiple queries.")
     parser.add_argument("--manual_query_selection", action="store_true",
                         help="Manually select query images.")
     parser.add_argument("--confidence_threshold", type=float, default=0.96,
