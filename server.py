@@ -53,14 +53,20 @@ def receive_all(connection, size):
         data += part
     return data
 
-def save_image(data, dir, filename):
+def save_image(data, dir, filename, dtype, dims):
     if not os.path.exists(dir):
         os.makedirs(dir)
     
     # Save the image to the specified directory
     filepath = os.path.join(dir, filename)
-    with open(filepath, 'wb') as f:
-        f.write(data)
+    data = np.frombuffer(data, dtype=dtype).reshape(dims[0], dims[1], dims[2])
+
+    from matplotlib import pyplot as plt
+    plt.imsave(filepath, data)
+
+    #with open(filepath, 'wb') as f:
+        # f.write(data)
+    #    pass
     print("Saving image to filepath: ", filepath)
     return filepath
 
@@ -103,10 +109,13 @@ def send_predictions(connection, predictions):
    
     # Send the length of the JSON string
     size = len(predictions)
-    connection.sendall(struct.pack('!I', size))
+    connection.sendall(str(size).encode('utf-8'))
+    print(connection.recv(1024).decode())
     
     # Send the JSON string
     connection.sendall(predictions.encode('utf-8'))
+    print(connection.recv(1024).decode())
+
 
 def find_grasping_points(data, predictions):
     # Get the grasping points for each object
@@ -166,15 +175,17 @@ if __name__ == "__main__":
     sock.settimeout(5)
     
 
-    
+
     file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
+    
 
     # Load the list of tensors onto the GPU
-    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
+  #  query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
     
-   # query_embeddings, classes = zero_shot()
+    
+    query_embeddings, classes = zero_shot()
     cls = [0]
 
     # Create an observer to watch for new query images
@@ -193,14 +204,16 @@ if __name__ == "__main__":
     initial_batch_processed = False
 
     try:    
+        print("Initializing the connection :D")
         while True: 
-            try:
-                print('waiting for a connection')
-                connection, client_address = sock.accept()
-                print('connection from', client_address)
             
-
+            try:
+                
                 while True:
+                    print('waiting for a connection')
+                    connection, client_address = sock.accept()
+                    print('connection from', client_address)
+
                     # Receive the size of the image
                     # size_data = receive_all(connection, 1 )
                     # if not size_data:
@@ -208,7 +221,7 @@ if __name__ == "__main__":
                     # w = struct.unpack('!I', size_data)[0]
                     w = int(connection.recv(1024).decode())
                     connection.sendall(b'w')
-                    print(w, "GG")
+                    print("Image width", w)
 
                     # size_data = receive_all(connection, struct.calcsize('!I'))
                     # if not size_data:
@@ -216,7 +229,7 @@ if __name__ == "__main__":
                     #h = struct.unpack('!I', size_data)[0]
                     h = int(connection.recv(1024).decode())
                     connection.sendall(b'h')
-                    print(h, "WP")
+                    print("Image height", h)
 
                     # Receive the image data
                     image_data = receive_all(connection, w*h*3) # 3 channels for RGB
@@ -231,14 +244,13 @@ if __name__ == "__main__":
                         if not d:
                             break
                         d = np.frombuffer(d, dtype=np.float32)
-                        d.reshape(h,w,1)
+                        d = d.reshape(h,w,1)
                         data.append(d)
                         connection.sendall(b'float')
-
                         
                     # Save the image
                     filename = f'test_image.jpg'
-                    path = save_image(image_data, dir, filename)
+                    path = save_image(image_data, dir, filename, dtype=np.uint8, dims=(h, w, 3))
 
                     options.target_image_paths = path   # the path used in osod.py visualize_results
 
@@ -259,6 +271,7 @@ if __name__ == "__main__":
                     )
 
                     grasping_points = find_grasping_points(data, predictions)
+                    print(grasping_points)
                     # Send predictions back to the client
                     send_predictions(connection, grasping_points)
                     writer.add_text("Predictions", json.dumps(predictions))
