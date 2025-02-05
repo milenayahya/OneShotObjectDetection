@@ -360,7 +360,6 @@ def prepare_query_image(args, img_path):
     if img_path.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
         img_name = os.path.basename(img_path)
         category = ID2CLASS[float(img_name.split("_")[0])]
-        print("image path:", img_path)
         img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
         if args.use_supercategories:
                 from mgn_preprocess import CAT_TO_SUPERCAT_pre
@@ -515,8 +514,7 @@ def zero_shot_detection(
 
     if not args.manual_query_selection:
 
-        """
-        if args.k_shot > 1:
+        if args.k_shot > 1 and args.average_queries:
             class_embeddings_dict = {}
 
             # Group queries of same class together
@@ -531,8 +529,7 @@ def zero_shot_detection(
                 average_embedding = torch.mean(torch.stack(embeddings), dim=0)
                 query_embeddings.append(average_embedding)
                 classes.append(class_label)
-
-        """
+                
         writer.add_text("indexes of query objects", str(indexes))
         writer.add_text("classes of query objects", str(classes) )
         logger.info("Finished extracting the query embeddings")
