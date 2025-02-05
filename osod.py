@@ -360,6 +360,7 @@ def prepare_query_image(args, img_path):
     if img_path.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
         img_name = os.path.basename(img_path)
         category = ID2CLASS[float(img_name.split("_")[0])]
+        print("image path:", img_path)
         img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
         if args.use_supercategories:
                 from mgn_preprocess import CAT_TO_SUPERCAT_pre
@@ -375,7 +376,7 @@ def add_query(model, processor, args, img_path, query_embeddings, classes, write
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = model.to(device)
     idx, query_embed, cat = zero_shot_detection(model, processor, args, writer, cls, img_path= img_path, per_image=True)
-
+    query_embed = query_embed[0]
     query_embeddings.append(query_embed)
     classes.append(cat)  
 
@@ -505,7 +506,7 @@ def zero_shot_detection(
                     
                     
                     query_embeddings.append(query_embedding)
-
+                    
             pbar.update(1)
 
     file = os.path.join(query_dir, f"objectness_indexes_{args.comment}.json")
@@ -741,13 +742,6 @@ def one_shot_detection_batches(
             # if queries obtained by 0 shot
             query_embeddings_tensor = torch.stack(query_embeddings) # Shape: (num_batches, batch_size, hidden_size)
 
-            # if queries obtained by cls token
-            #query_embeddings_tensor = torch.cat(query_embeddings,dim=0)
-
-            #  if only one query
-            #query_embeddings_tensor = query_embeddings[0]
-
-            print("Query embeddings shape:", query_embeddings_tensor.shape)
             target_class_predictions, _ = model.class_predictor(reshaped_feature_map, query_embeddings_tensor)  # Shape: [batch_size, num_queries, num_classes]
 
             outputs = ModelOutputs(logits=target_class_predictions, pred_boxes=target_boxes)

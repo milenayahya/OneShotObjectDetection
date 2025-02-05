@@ -270,16 +270,17 @@ if __name__ == "__main__":
                         per_image=True
                     )
 
-                    grasping_points = find_grasping_points(data, predictions)
-                    print(grasping_points)
-                    # Send predictions back to the client
-                    send_predictions(connection, grasping_points)
-                    writer.add_text("Predictions", json.dumps(predictions))
-                    if options.visualize_test_images:
-                        filepath = os.path.join(results_dir, f"results_{id}.json")
-                        visualize_results(filepath, writer, per_image=True, args=options, random_selection=None)
-                    
-                    print(f'Sent predictions for {filename}')
+                    if len(predictions) > 0:
+                        grasping_points = find_grasping_points(data, predictions)
+                        print(grasping_points)
+                        # Send predictions back to the client
+                        send_predictions(connection, grasping_points)
+                        writer.add_text("Predictions", json.dumps(predictions))
+                        if options.visualize_test_images:
+                            filepath = os.path.join(results_dir, f"results_{id}.json")
+                            visualize_results(filepath, writer, per_image=True, args=options, random_selection=None)
+                        
+                        print(f'Sent predictions for {filename}')
 
 
             except socket.timeout:
