@@ -2,6 +2,7 @@ import socket
 import numpy as np
 import sys
 import signal
+import time
 from RunOptions import RunOptions
 from tensorboardX import SummaryWriter
 import torch
@@ -31,6 +32,7 @@ class ImageHandler(FileSystemEventHandler):
         if event.src_path.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
             print(f"New query image detected: {event.src_path}")
             with self.lock:
+                time.sleep(2)
                 self.query_embeddings, self.classes = add_query(
                     self.model,
                     self.processor,
@@ -79,7 +81,7 @@ def signal_handler(sig, frame):
 
 def zero_shot():
     # Find the objects in the query images
-    cls = [1]*12
+    cls = [1,1,1,0,0]
     if options.manual_query_selection:
         zero_shot_detection(model, processor, options, writer)
         #indexes = [1523, 1700, 1465, 1344]
@@ -135,7 +137,7 @@ def find_grasping_points(data, predictions):
         grasping_points.append(grasping_point)
 
     # sort by increasing value of z
-    grasping_points = sorted(grasping_points, key=lambda x: x[2])
+    grasping_points = sorted(grasping_points, key=lambda x: -x[2])
     grasping_points = np.array(grasping_points)
     grasping_points = np.array2string(grasping_points, separator=' ', precision=3)
     
@@ -174,7 +176,7 @@ if __name__ == "__main__":
     # Set the socket to non-blocking mode
     sock.settimeout(5)
     
-
+    """
 
     file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'r') as f:
@@ -182,9 +184,9 @@ if __name__ == "__main__":
     
 
     # Load the list of tensors onto the GPU
-  #  query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
     
-    
+    """
     query_embeddings, classes = zero_shot()
     cls = [0]
 
@@ -249,7 +251,7 @@ if __name__ == "__main__":
                         connection.sendall(b'float')
                         
                     # Save the image
-                    filename = f'test_image.jpg'
+                    filename = f'test{options.comment}.png'
                     path = save_image(image_data, dir, filename, dtype=np.uint8, dims=(h, w, 3))
 
                     options.target_image_paths = path   # the path used in osod.py visualize_results
@@ -281,6 +283,9 @@ if __name__ == "__main__":
                             visualize_results(filepath, writer, per_image=True, args=options, random_selection=None)
                         
                         print(f'Sent predictions for {filename}')
+                    else:
+                        send_predictions(connection, "empty")
+
 
 
             except socket.timeout:
@@ -296,3 +301,4 @@ if __name__ == "__main__":
         # Clean up the connection
         if 'connection' in locals():
             connection.close()
+

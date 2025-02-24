@@ -24,7 +24,7 @@ class RunOptions:
                  manual_query_selection: bool = False,
                  confidence_threshold: float = 0.96,
                  visualize_query_images: bool = True,
-                 visualize_test_images: bool = False,
+                 visualize_test_images: bool = True,
                  nms_between_classes: bool = False,
                  nms_threshold: float = 0.3,
                  write_to_file_freq: int = 40,
