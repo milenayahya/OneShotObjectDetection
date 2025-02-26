@@ -27,6 +27,27 @@ def modify_json_lines(file_path):
         for line in lines:
             json.dump(line, f)
             f.write('\n')
+
+    
+def modify_json_lines_filter(file_path, threshold):
+    with open(file_path, 'r') as f:
+        lines = [json.loads(line) for line in f]
+    
+    # Filter out predictions with scores below the threshold
+    filtered_lines = [
+        line for line in lines
+        if line['score'] >= threshold
+    ]
+    
+    # Modify the image_id field for the remaining lines
+    for line in filtered_lines:
+        line['image_id'] = int(line['image_id'].split('.')[0].split("scene")[1])
+    
+    # Write the filtered and modified lines to a new file
+    with open("testMGN.json", 'w') as f:
+        for line in filtered_lines:
+            json.dump(line, f)
+            f.write('\n')
     
     
 def calculate_iou(pred_bbox, gt_bbox):
@@ -127,6 +148,66 @@ def evaluate(annFile, resFile, plot_pr = False, per_category = False):
                 plot_pr_curve(cocoEval, precisions, recalls, cat_id, cat_id_to_index)
         if per_category:
             return category_ap
+        
+
+def evaluate_per_category_metrics(annFile, resFile, iou_threshold=0.5):
+    # Load ground truth and detection results
+    cocoGt = COCO(annFile)
+    annotations = load_json_lines(resFile)
+    
+    # Initialize COCO detections API
+    cocoDt = cocoGt.loadRes(annotations)
+    
+    # Get image IDs and category IDs
+    imgIds = sorted(cocoGt.getImgIds())
+    catIds = sorted(cocoGt.getCatIds())
+    
+    # Initialize COCOeval
+    cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
+    cocoEval.params.imgIds = imgIds
+    cocoEval.params.catIds = catIds
+    cocoEval.params.iouThrs = [iou_threshold]  # Set IoU threshold
+    
+    # Run evaluation
+    cocoEval.evaluate()
+    cocoEval.accumulate()
+    cocoEval.summarize()
+    
+    # Extract evaluation results
+    evalImgs = cocoEval.evalImgs  # List of evaluation results per image and category
+    
+    # Calculate per-category precision, recall, F1 score, and accuracy
+    category_metrics = {}
+    for catId in catIds:
+        true_positives = 0
+        false_positives = 0
+        false_negatives = 0
+        total_predictions = 0
+        total_ground_truths = 0
+        for evalImg in evalImgs:
+            if evalImg is None:
+                continue
+            if evalImg['category_id'] == catId:
+                true_positives += np.sum(evalImg['dtMatches'][0] > 0)  # Matches at the specified IoU threshold
+                false_positives += np.sum(evalImg['dtMatches'][0] == 0)
+                false_negatives += np.sum(evalImg['gtMatches'][0] == 0)
+                total_predictions += len(evalImg['dtMatches'][0])
+                total_ground_truths += len(evalImg['gtMatches'][0])
+        
+        precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
+        recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
+        f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        accuracy = true_positives / total_predictions if total_predictions > 0 else 0
+        
+        category_metrics[catId] = {
+            'precision': precision,
+            'recall': recall,
+            'f1_score': f1_score,
+            'accuracy': accuracy
+        }
+    
+    return category_metrics
+
 
 def tune_confidence_threshold(annFile, resFile, threshold_range, plot_f1):
     cocoGt = COCO(annFile)
@@ -229,22 +310,32 @@ if __name__ == '__main__':
     #resFile = "Results/results_imgnet_coco_subset.json"   # Results file for the subset of the test set using \5 imgnet queries
     #resFile = "Results/results_MGN_val_run.json"  
     #resFile = "Results/results_MGN_subset.json"
-    resFile = "Results/results_MGN_5_shot.json"
+    resFile = "Results/results_MGN_eval_final.json"
     modify_json_lines(resFile)
     resFile = "testMGN.json" 
     
+    
+    category_metrics = evaluate_per_category_metrics(annFile, resFile)
+    
+    print("\nPer-Category Metrics:")
+    for catId, metrics in category_metrics.items():
+        cat_name = ID2CLASS[catId]
+        print(f"Category {catId} ({cat_name}): Precision = {metrics['precision']:.4f}, Recall = {metrics['recall']:.4f}, F1 Score = {metrics['f1_score']:.4f}, Accuracy = {metrics['accuracy']:.4f}")
+    
+    """
     cat_ap = evaluate(annFile, resFile, plot_pr = False, per_category = True)
    
+    
     print("\nCategories with AP < 0.1:")
     for cat_id, ap in cat_ap.items():
         if ap < 0.1:
             print(f"Category {cat_id} ({ID2CLASS[cat_id]}): AP = {ap:.4f}")
     print(f"{len([ap for ap in cat_ap.values() if ap < 0.1])} categories have AP < 0.1")
+   
     
-    """
     # Tune confidence threshold
     thresholds = np.arange(0.1, 1.0, 0.05)
-    cat_ids, optimal_thresholds = tune_confidence_threshold(annFile, resFile, thresholds, plot_f1=False)
+    cat_ids, optimal_thresholds = tune_confidence_threshold(annFile, resFile, thresholds, plot_f1=True)
 
     print("Categories evaluated: ", cat_ids)
     print("Optimal thresholds and F1 scores: ", optimal_thresholds)
