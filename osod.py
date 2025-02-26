@@ -360,7 +360,6 @@ def prepare_query_image(args, img_path):
     if img_path.endswith((".png", ".jpg", ".jpeg", ".bmp", "JPEG")):
         img_name = os.path.basename(img_path)
         category = ID2CLASS[float(img_name.split("_")[0])]
-        print("image path:", img_path)
         img = cv2.cvtColor(cv2.imread(img_path), cv2.COLOR_BGR2RGB)
         if args.use_supercategories:
                 from mgn_preprocess import CAT_TO_SUPERCAT_pre
@@ -384,9 +383,13 @@ def add_query(model, processor, args, img_path, query_embeddings, classes, write
     with open(file, 'w') as f:
         json.dump(classes, f)
 
+    """
     if device.type == "cpu":
         print("Query embeddings are on CPU")
-        query_embeddings = [embedding.cpu().numpy() for embedding in query_embeddings]
+        for embedding in query_embeddings:
+            if embedding.is_tensor():
+                embedding.cpu().numpy()
+    """ 
 
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{args.comment}_gpu.pth'))
@@ -515,8 +518,7 @@ def zero_shot_detection(
 
     if not args.manual_query_selection:
 
-        """
-        if args.k_shot > 1:
+        if args.k_shot > 1 and args.average_queries:
             class_embeddings_dict = {}
 
             # Group queries of same class together
@@ -532,7 +534,6 @@ def zero_shot_detection(
                 query_embeddings.append(average_embedding)
                 classes.append(class_label)
 
-        """
         writer.add_text("indexes of query objects", str(indexes))
         writer.add_text("classes of query objects", str(classes) )
         logger.info("Finished extracting the query embeddings")
@@ -648,6 +649,7 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
     if per_image:   
         dir = dir.split("/")[0]
     for image_id, data in image_data.items():
+        print("image id: ", image_id)
         for filename in os.listdir(dir):
             file = filename.split(".")[0] #remove extension
             if args.data == "MGN" and file.startswith("scene"):
@@ -655,7 +657,7 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
             
             if (file.endswith(str(image_id)) and not file.startswith("scene")) or (args.data == "MGN" and file == f"scene{image_id}" or file==image_id):
                 if per_image: 
-                    image_path = args.target_image_paths
+                    image_path = os.path.join("received_images", filename)
                 else:   
                     image_path = os.path.join(args.target_image_paths, filename)
                 image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB) 
@@ -665,6 +667,7 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
                 for box, cat, score in zip(data['bboxes'], data['categories'], data['scores']):
                     x,y,w,h =box
                     ax.add_patch(plt.Rectangle((x, y), w, h, edgecolor=ID2COLOR[cat], facecolor='none', linewidth=2))
+                    """
                     ax.text(
                         x + 0.015, 
                         y+ 3, 
@@ -681,7 +684,8 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
                             #],  # Use respective color
                             "boxstyle": "square",
                         }
-                    )                
+                    )  
+                    """              
                 writer.add_figure(f"Test_Image_with_prediction_boxes/image_{image_id}", fig)
                 
 
@@ -749,7 +753,7 @@ def one_shot_detection_batches(
             
             extracted_boxes = [result['boxes'] for result in results]
             extracted_boxes_tensor = torch.stack([torch.tensor(boxes) for boxes in extracted_boxes])
-
+            print("extracted boxes")
             # Set target_boxes to the extracted boxes tensor
             target_boxes = extracted_boxes_tensor.to(device) # Boxes are in x1, y1, x2, y2 format
             target_boxes = target_boxes.detach()  # Keep in GPU
@@ -763,11 +767,12 @@ def one_shot_detection_batches(
             if args.mode == "test":
                 if isinstance(args.confidence_threshold, (int, float)):
                     top_indices = (scores >= args.confidence_threshold).any(dim=-1)
-                else:
+                else: 
+                    print("per cat threshold if")
                     idxs = torch.argmax(scores, dim=-1)
                     # Compare the scores with the corresponding class-specific threshold
                     predicted_classes = [[classes[idx] for idx in image_idxs] for image_idxs in idxs.tolist()]
-                    thresholds = [[args.confidence_threshold[class_id] for class_id in image_classes] for image_classes in predicted_classes]
+                    thresholds = [[args.confidence_threshold[str(class_id)] for class_id in image_classes] for image_classes in predicted_classes]
                     thresholds_tensor = torch.tensor(thresholds, device=scores.device)
                     max_scores = scores[torch.arange(scores.size(0)).unsqueeze(1), torch.arange(scores.size(1)).unsqueeze(0), idxs]
                     top_indices = (max_scores > thresholds_tensor).to(device) 
@@ -822,7 +827,7 @@ def one_shot_detection_batches(
                 )  
             if(len(nms_boxes_coco) == 0):
                 logger.info("No boxes detected in the image")
-                return 
+                return -1, []
                 
             # Collect results in COCO format
             for idx, (box, score, cls, img_idx) in enumerate(zip(nms_boxes_coco, nms_scores, nms_classes, nms_image_indices)):
@@ -895,32 +900,19 @@ def map_supercategories(results_file):
     
     return 
 
-   
 
 
 if __name__ == "__main__":
-    
-    best_thresholds_MGN = {
-    1: 0.65, 2: 0.5, 3: 0.8, 4: 0.8, 5: 0.1, 6: 0.95, 7: 0.1, 8: 0.95, 
-    11: 0.1, 12: 0.1, 13: 0.85, 14: 0.9, 15: 0.1, 16: 0.1, 17: 0.1, 
-    18: 0.1, 19: 0, 20: 0, 21: 0.85, 22: 0.1, 23: 0.95, 24: 0.1, 
-    25: 0.95, 26: 0.9, 27: 0.95, 28: 0.1, 29: 0.95, 30: 0.1, 31: 0.1, 
-    32: 0.9, 37: 1.0, 38: 0.95, 39: 0.1, 40: 0.9, 41: 0.9, 42: 0.95, 
-    43: 0.1, 44: 0.65, 45: 0.1, 46: 0.1, 47: 0.1, 48: 0, 49: 0.95, 
-    50: 0.95, 51: 0.95, 52: 0.55, 53: 0, 54: 0.1, 56: 0.1, 57: 0.9, 
-    58: 0.95, 59: 0.95, 60: 0.85, 61: 0.1, 62: 0.85, 64: 0, 65: 0.6, 
-    74: 0.9, 75: 0, 87: 0.1, 88: 0.1, 89: 0.95, 93: 0.1, 94: 0.1, 
-    95: 0.1, 96: 0.95, 64: 0.7, 75: 0.7, 48: 0.7, 19: 0.7, 53: 0.7, 20: 0.7}
 
     options = RunOptions(
         mode = "test",
-        source_image_paths= os.path.join(query_dir, "MGN_5_shot"),
-        target_image_paths= "MGN/MGN_images",
+        source_image_paths= os.path.join(query_dir, "test"),
+        target_image_paths= "Test/test",
         data="MGN",
-        comment="MGN_5_shot", 
+        comment="invnms01", 
         query_batch_size=8, 
         manual_query_selection=False,
-        confidence_threshold= 0.1,
+        confidence_threshold= {"98.0": 1.00, "99.0": 0.3},
         test_batch_size=8, 
         k_shot=5,
         topk_test= 70,
@@ -952,7 +944,7 @@ if __name__ == "__main__":
 
     queries = torch.load(f'Queries/query_embeddings_subset_5_shot_gpu.pth', map_location=device)
    
-    cls = 0
+    cls = [0]*2
     img_path = "Queries/Comau/7_mug_1.png"
     query_embeddings, classes = add_query(model,
         processor,
@@ -966,10 +958,10 @@ if __name__ == "__main__":
     print("Classes: ", classes)
     print("lenght of query embeds: ", len(query_embeddings))
                                
+    """
     
     
-
-    cls = [1] * 377
+   
     # Find the objects in the query images
     if options.manual_query_selection:
       #  zero_shot_detection(model, processor, options, writer)
@@ -992,8 +984,7 @@ if __name__ == "__main__":
             model,
             processor,
             options,
-            writer,
-            cls            
+            writer,         
         )
     
     
@@ -1001,20 +992,22 @@ if __name__ == "__main__":
     with open(file, 'w') as f:
         json.dump(classes, f)
 
+    """
+    
     if device.type == "cpu":
         print("Query embeddings are on CPU")
         query_embeddings = [embedding.cpu().numpy() for embedding in query_embeddings]
-
+    """
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
-   
-    """
+
     
-    file = os.path.join(query_dir, f"classes_MGN_5_shot.json")
+    
+    file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'r') as f:
         classes = json.load(f)
 
-    query_embeddings = torch.load(f'Queries/query_embeddings_MGN_5_shot_gpu.pth', map_location=device)
+    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
    
     # Detect query objects in test images
     coco_results = one_shot_detection_batches(
