@@ -92,7 +92,9 @@ CLASS2ID = {
     "woodblock_a": 93.0,
     "woodblock_b": 94.0,
     "woodblock_c": 95.0,
-    "mannequin": 96.0
+    "mannequin": 96.0,
+    "condensator": 98.0,
+    "allen_key": 99.0
 }
 
 ID2CLASS = {v: k for k, v in CLASS2ID.items()}
@@ -181,7 +183,9 @@ ID2COLOR = {
     94: (153 / 255, 153 / 255, 153 / 255),
     95: (250 / 255, 170 / 255, 160 / 255),
     96: (230 / 255, 150 / 255, 140 / 255),
-    97: (190 / 255, 153 / 255, 153 / 255)
+    97: (190 / 255, 153 / 255, 153 / 255),
+    98: (190 / 255, 153 / 255, 153 / 255),
+    99: (0 , 0, 255 / 255)
 }
 
 
@@ -352,7 +356,8 @@ CLASS2ID_pre = {
     "woodblock_a": 93.0,
     "woodblock_b": 94.0,
     "woodblock_c": 95.0,
-    "mannequin": 96.0
+    "mannequin": 96.0,
+    "condensator": 98.0
 }
 ID2CLASS_pre = {v: k for k, v in CLASS2ID_pre.items()}
 CAT_TO_SUPERCAT_pre = {
@@ -457,6 +462,8 @@ ID2COLOR_pre = {
     94.0: [0.6, 0.5, 0.4],    # woodblock_b: Light Brown
     95.0: [0.7, 0.6, 0.5],    # woodblock_c: Tan
     96.0: [0.8, 0.8, 0.9],    # mannequin: Soft Gray
+    98.0: [0.5, 0.4, 0.3],
+    99.0: [0.7, 0.3, 0.3]
 }
 
 ############################################################################################
