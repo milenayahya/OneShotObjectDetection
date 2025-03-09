@@ -242,7 +242,7 @@ def nms_tf(
 
 
 
-def save_results(coco_results, options, per_image, im_id):
+def save_results(coco_results, options, per_image, im_id, batch_index):
     """
     Save the results to a JSON file.
     
@@ -255,7 +255,11 @@ def save_results(coco_results, options, per_image, im_id):
                 f.write(json.dumps(result) + '\n')
     else:
         file = os.path.join(results_dir, f"results_{options.comment}.json")
-        with open(file, "a") as f:
+        if batch_index < options.write_to_file_freq:
+            mode = 'w'
+        else:
+            mode = 'a'
+        with open(file, mode) as f:
             for result in coco_results:
                 f.write(json.dumps(result) + '\n')
     

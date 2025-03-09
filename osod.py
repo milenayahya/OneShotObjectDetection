@@ -495,10 +495,13 @@ def zero_shot_detection(
                         areas = [box[2] * box[3] for box in topk_boxes]
                         max_area_index = torch.argmax(torch.tensor(areas))
                         max_area = areas[max_area_index]
-                        objectness = round(float(current_objectnesses[i, topk_indices[max_area_index]]),2)      
+                        objectness = round(float(current_objectnesses[i, topk_indices[max_area_index]]),2)    
+                        print("area of obj box: ", area_obj)
+                        print("max area: ", max_area)  
 
                         #first check: threshold max_area_box on objectness score 
-                        if objectness < 0.1 or (area_obj/max_area) <= 0.7:
+                        # previous values are 0.1 and <=0.7
+                        if objectness < 0.01 or (area_obj/max_area) >= 0.7:
                             indexes.append(idx_obj.cpu().item())
                             query_embedding = current_class_embeddings[i, idx_obj]
 
@@ -612,8 +615,8 @@ def find_query_patches_batches(
 
         # Remove batch dimension for each image in the batch
         for i in range(batch_size):
-            current_source_boxes = source_boxes[i].detach().cpu().numpy()
-            current_class_embedding = source_class_embedding[i].detach().cpu().numpy()
+            current_source_boxes = source_boxes[i].detach()
+            current_class_embedding = source_class_embedding[i].detach()
 
             # Extract the query embedding for the current image based on the given index
             query_embedding = current_class_embedding[indexes[batch_start + i]]
@@ -667,7 +670,7 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
                 for box, cat, score in zip(data['bboxes'], data['categories'], data['scores']):
                     x,y,w,h =box
                     ax.add_patch(plt.Rectangle((x, y), w, h, edgecolor=ID2COLOR[cat], facecolor='none', linewidth=2))
-                    """
+                    
                     ax.text(
                         x + 0.015, 
                         y+ 3, 
@@ -685,7 +688,7 @@ def visualize_results(filepath, writer, per_image, args, random_selection=None):
                             "boxstyle": "square",
                         }
                     )  
-                    """              
+                                
                 writer.add_figure(f"Test_Image_with_prediction_boxes/image_{image_id}", fig)
                 
 
@@ -858,7 +861,7 @@ def one_shot_detection_batches(
         # TO DO: make the number of batches to save results to file a parameter
         batch_index = batch_start // args.test_batch_size + 1
         if batch_index % args.write_to_file_freq == 0:
-            file = save_results(coco_results, args, per_image, img_id)
+            file = save_results(coco_results, args, per_image, img_id, batch_index)
             #logger.info(f"Saved results of 30 batches to file starting from batch {batch_index - 30} to batch {batch_index}")    
             coco_results.clear()
 
@@ -869,7 +872,7 @@ def one_shot_detection_batches(
     pbar.close()
 
     # Save the remaining results to file
-    file = save_results(coco_results, args, per_image, img_id)
+    file = save_results(coco_results, args, per_image, img_id, batch_index)
 
     if args.generalize_categories:
         map_supercategories(file)
@@ -900,23 +903,110 @@ def map_supercategories(results_file):
     
     return 
 
-
-
 if __name__ == "__main__":
+
+
+    optimal_thresholds_f1 = {
+    "1.0": 1.0,
+    "2.0": 1.0,
+    "3.0": 1.0,
+    "4.0": 0.81,
+    "5.0": 1.0,
+    "6.0": 1.0,
+    "7.0": 1.0,
+    "8.0": 1.0,
+    "11.0": 1.0,
+    "12.0": 0.97,
+    "13.0": 1.0,
+    "14.0": 0.94,
+    "15.0": 0.98,
+    "16.0": 1.0,
+    "17.0": 1.0,
+    "18.0": 1.0,
+    "19.0": 1.0,
+    "20.0": 0.98,
+    "21.0": 1.0,
+    "22.0": 1.0,
+    "23.0": 1.0,
+    "24.0": 1.0,
+    "25.0": 1.0,
+    "26.0": 1.0,
+    "27.0": 1.0,
+    "28.0": 0.97,
+    "29.0": 1.0,
+    "30.0": 0.99,
+    "31.0": 1.0,
+    "32.0": 1.0,
+    "37.0": 0.97,
+    "38.0": 0.99,
+    "39.0": 1.0,
+    "40.0": 0.99,
+    "41.0": 1.0,
+    "42.0": 1.0,
+    "43.0": 1.0,
+    "44.0": 0.98,
+    "45.0": 0.99,
+    "46.0": 1.0,
+    "47.0": 1.0,
+    "48.0": 0.1,
+    "49.0": 1.0,
+    "50.0": 1.0,
+    "51.0": 1.0,
+    "52.0": 0.99,
+    "53.0": 0.95,
+    "54.0": 0.99,
+    "56.0": 1.0,
+    "57.0": 0.99,
+    "58.0": 1.0,
+    "59.0": 1.0,
+    "60.0": 1.0,
+    "61.0": 1.0,
+    "62.0": 1.0,
+    "63.0": 1.0,
+    "64.0": 0.1,
+    "65.0": 1.0,
+    "66.0": 0.99,
+    "67.0": 1.0,
+    "68.0": 1.0,
+    "69.0": 0.99,
+    "71.0": 1.0,
+    "72.0": 1.0,
+    "73.0": 0.84,
+    "74.0": 1.0,
+    "75.0": 0.1,
+    "76.0": 1.0,
+    "77.0": 0.99,
+    "79.0": 1.0,
+    "83.0": 1.0,
+    "84.0": 0.99,
+    "85.0": 0.98,
+    "86.0": 1.0,
+    "87.0": 1.0,
+    "88.0": 1.0,
+    "89.0": 0.96,
+    "90.0": 1.0,
+    "92.0": 1.0,
+    "93.0": 1.0,
+    "94.0": 0.99,
+    "95.0": 1.0,
+    "96.0": 1.0
+    }
 
     options = RunOptions(
         mode = "test",
-        source_image_paths= os.path.join(query_dir, "test"),
-        target_image_paths= "Test/test",
+        source_image_paths= os.path.join(query_dir, "MGN_query_set"),
+        target_image_paths= "Test/MGN/MGN_test_images",
         data="MGN",
-        comment="invnms01", 
+        comment="tuned_thresholds", 
         query_batch_size=8, 
         manual_query_selection=False,
-        confidence_threshold= {"98.0": 1.00, "99.0": 0.3},
+        confidence_threshold= optimal_thresholds_f1,
         test_batch_size=8, 
-        k_shot=5,
-        topk_test= 70,
+        k_shot=1,
+        topk_test= 100,
+        topk_query= 3,
         visualize_query_images=True,
+        visualize_test_images=True,
         nms_between_classes=False,
         nms_threshold=0.3,
         write_to_file_freq=5,
@@ -958,19 +1048,19 @@ if __name__ == "__main__":
     print("Classes: ", classes)
     print("lenght of query embeds: ", len(query_embeddings))
                                
-    """
+    
     
     
    
     # Find the objects in the query images
     if options.manual_query_selection:
-      #  zero_shot_detection(model, processor, options, writer)
+        #zero_shot_detection(model, processor, options, writer)
 
-        categories = ["sugar_box", "wineglass"]
-        idx = [1689, 2166]
+        categories = ["fold"]
+        idx = [1517]
 
         indexes = modify_max_objectness_indices(
-            os.path.join(query_dir, f"objectness_indexes_again.json"), 
+            os.path.join(query_dir, f"objectness_indexes_{options.comment}.json"), 
             categories, 
             idx)
         indexes = [v for k, v in indexes.items()]
@@ -984,31 +1074,33 @@ if __name__ == "__main__":
             model,
             processor,
             options,
-            writer,         
+            writer,  
+            cls= [1]  
         )
-    
-    
+    print(indexes)
+
+
     file = os.path.join(query_dir, f"classes_{options.comment}.json")
     with open(file, 'w') as f:
         json.dump(classes, f)
 
-    """
+
     
     if device.type == "cpu":
         print("Query embeddings are on CPU")
         query_embeddings = [embedding.cpu().numpy() for embedding in query_embeddings]
-    """
+    
     # Save the list of GPU tensors to a file
     torch.save(query_embeddings, os.path.join(query_dir, f'query_embeddings_{options.comment}_gpu.pth'))
 
+   
     
-    
-    file = os.path.join(query_dir, f"classes_{options.comment}.json")
+    file = os.path.join(query_dir, f"classes_MGN.json")
     with open(file, 'r') as f:
         classes = json.load(f)
 
-    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
-   
+    query_embeddings = torch.load(f'Queries/query_embeddings_MGN_gpu.pth', map_location=device)
+
     # Detect query objects in test images
     coco_results = one_shot_detection_batches(
         model,
@@ -1019,18 +1111,13 @@ if __name__ == "__main__":
         writer,
         per_image=False
     )
-     
+    
     if coco_results is not None:
         filepath = os.path.join(results_dir, f"results_{options.comment}.json")
         visualize_results(filepath, writer, per_image=False, args=options, random_selection=None)
 
+    writer.close()
     """
- # Load the list of tensors onto the GPU
-    query_embeddings = torch.load(f'Queries/query_embeddings_{options.comment}_gpu.pth', map_location=device)
-    query_embeddings = torch.stack(query_embeddings)
-    query_embeddings1 = torch.load(f'Queries/query_embeddings_standard_gpu.pth', map_location=device)
-    query_embeddings1 = torch.stack(query_embeddings1)
-    cos_sim = torch.nn.functional.cosine_similarity(query_embeddings, query_embeddings1, dim=1)
-    print("Cosine similarity between case 1 and case 2 embeddings:", cos_sim)
 
-    """ 
+    filepath = os.path.join(results_dir, f"results_MGN_eval_final.json")
+    visualize_results(filepath, writer, per_image=False, args=options, random_selection=None)

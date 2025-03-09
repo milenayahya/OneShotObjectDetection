@@ -1,7 +1,7 @@
 import os
 
 PROJECT_BASE_PATH = os.path.abspath(
-    "C:\\PoliTO\\Master\\Milena\\Project\\OneShotObjectDetection"
+    "C:\\Users\\cm03009\\Documents\\OneShotObjectDetection"
 )
 query_dir = os.path.join(PROJECT_BASE_PATH, "Queries")
 test_dir = os.path.join(PROJECT_BASE_PATH, "Test")

@@ -30,14 +30,23 @@ def modify_json_lines(file_path):
 
     
 def modify_json_lines_filter(file_path, threshold):
+
     with open(file_path, 'r') as f:
         lines = [json.loads(line) for line in f]
+
+    filtered_lines = []
+
+    if type(threshold) == dict:
+        for line in lines:
+            cat = line['category_id']
+            if line['score'] >= threshold[str(cat)]:
+                filtered_lines.append(line)
+    else:
+        filtered_lines = [
+            line for line in lines
+            if line['score'] >= threshold
+        ]
     
-    # Filter out predictions with scores below the threshold
-    filtered_lines = [
-        line for line in lines
-        if line['score'] >= threshold
-    ]
     
     # Modify the image_id field for the remaining lines
     for line in filtered_lines:
@@ -160,6 +169,7 @@ def evaluate_per_category_metrics(annFile, resFile, iou_threshold=0.5):
     
     # Get image IDs and category IDs
     imgIds = sorted(cocoGt.getImgIds())
+    #catIds = {19,84,85,87,89,90,92,94,96}
     catIds = sorted(cocoGt.getCatIds())
     
     # Initialize COCOeval
@@ -190,20 +200,19 @@ def evaluate_per_category_metrics(annFile, resFile, iou_threshold=0.5):
             if evalImg['category_id'] == catId:
                 true_positives += np.sum(evalImg['dtMatches'][0] > 0)  # Matches at the specified IoU threshold
                 false_positives += np.sum(evalImg['dtMatches'][0] == 0)
-                false_negatives += np.sum(evalImg['gtMatches'][0] == 0)
                 total_predictions += len(evalImg['dtMatches'][0])
                 total_ground_truths += len(evalImg['gtMatches'][0])
+                false_negatives = total_ground_truths - true_positives
         
         precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
         recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
         f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-        accuracy = true_positives / total_predictions if total_predictions > 0 else 0
+        
         
         category_metrics[catId] = {
             'precision': precision,
             'recall': recall,
             'f1_score': f1_score,
-            'accuracy': accuracy
         }
     
     return category_metrics
@@ -213,36 +222,41 @@ def tune_confidence_threshold(annFile, resFile, threshold_range, plot_f1):
     cocoGt = COCO(annFile)
     annotations = load_json_lines(resFile)
     cat_ids = {ann['category_id'] for ann in annotations}
-
+    all_img_ids = {ann['image_id'] for ann in annotations}
     optimal_thresholds = {}
     for cat_id in cat_ids:
+        
         best_f1 = 0
         best_threshold = 0
+
         if plot_f1:
             f1_scores = []
             valid_thresholds = []
+            recalls = []
+            precisions = []
+            tp = []
+            fn = []
+            gt = []
+            ignored = []
+
         for threshold in threshold_range:
-            filtered_annotations = [ann for ann in annotations if ann['score'] > threshold and ann['category_id'] == cat_id]
+            true_positives = 0
+            false_positives = 0
+            false_negatives = 0
+            total_predictions = 0
+            total_ground_truths = 0
+            ignore = 0
+            filtered_annotations = [ann for ann in annotations if ann['score'] >= threshold and ann['category_id'] == cat_id]
             if not filtered_annotations:
+                print(f"No predictions for category {cat_id} at threshold {threshold}")
+                input()
                 continue
 
             results_img_ids = {ann['image_id'] for ann in filtered_annotations}
-            gt_img_ids = set(cocoGt.getImgIds())
-
-            cats = {ann['category_id'] for ann in filtered_annotations}
-            mapping = {cat: i for i, cat in enumerate(cats)}
-
-            # Check if image IDs match
-            if not results_img_ids.issubset(gt_img_ids):
-                print(f"Error: Results contain image IDs not present in COCO ground truth for category {cat_id}.")
-                print("IDs not present in ground truth: ", results_img_ids - gt_img_ids)
-                print("IDs in results: ", results_img_ids)
-                continue
 
             # Initialize COCO detections api
             cocoDt = cocoGt.loadRes(filtered_annotations)
-            imgIds = list(results_img_ids)
-
+            imgIds = list(all_img_ids)
 
             cocoEval = COCOeval(cocoGt, cocoDt, 'bbox')
             cocoEval.params.imgIds = imgIds
@@ -251,39 +265,63 @@ def tune_confidence_threshold(annFile, resFile, threshold_range, plot_f1):
 
             cocoEval.evaluate()
             cocoEval.accumulate()
-         #   cocoEval.summarize()
-
-            precision = cocoEval.eval['precision']  # [TxRxKxAxM]
-            recall = cocoEval.eval['recall']  # [TxKxAxM]
-
-            ### extract relevant precision and recall for category
-            precision = precision[:, :, mapping[cat_id], 0, 2]  # all areas and max detections
-            recall = recall[:, mapping[cat_id], 0, 2]
-
-            # Calculate F1 score
-            f1_score = 2 * (precision * recall) / (precision + recall)
-            # f1_score = np.nan_to_num(f1_score, nan=0.0)  # Replace NaN with 0
-                   
-            # Find the maximum F1 score
+           # cocoEval.summarize()
+            evalImgs = cocoEval.evalImgs  # List of evaluation results per image and category and threshold
             
-            max_f1 = np.max(f1_score)
+            for evalImg in evalImgs:
+                if evalImg is None:
+                    continue
+                if evalImg['category_id'] == cat_id:
+                    true_positives += np.sum(evalImg['dtMatches'][0] > 0)  # Matches at the specified IoU threshold
+                    false_positives += np.sum(evalImg['dtMatches'][0] == 0)
+                    #false_negatives += np.sum(evalImg['gtMatches'][0] == 0)
+                    total_predictions += len(evalImg['dtMatches'][0])
+                    total_ground_truths += len(evalImg['gtMatches'][0])
+                    
+                   # print(f"image id: {evalImg['image_id']}, category: {cat_id}, threshold: {threshold}, true positives: {true_positives}, false positives: {false_positives}, total predictions: {total_predictions}, total ground truths: {total_ground_truths}")
+                   # input() 
+                    false_negatives = total_ground_truths - true_positives
+            #print(f"Max F1 score for category {cat_id} at threshold {threshold}: {max_f1}")
+           
+           
+            precision = (true_positives / (true_positives + false_positives)) if (true_positives + false_positives) > 0 else 0
+            recall = (true_positives / (true_positives + false_negatives)) if (true_positives + false_negatives) > 0 else 0
+            f1_score = 2 * ((precision * recall) / (precision + recall)) if (precision + recall) > 0 else 0
+            
             if plot_f1:
-                f1_scores.append(max_f1)
+                tp.append(true_positives)
+                fn.append(false_negatives)
+                gt.append(total_ground_truths)
+                ignored.append(ignore)
+                recalls.append(recall)
+                precisions.append(precision)
+                f1_scores.append(f1_score)
                 valid_thresholds.append(threshold)
-            if max_f1 > best_f1:
-                best_f1 = max_f1
+                #print("At threshold: ", threshold, "precision: ", precision, "recall: ", recall, "F1 score: ", f1_score)
+                #input()
+            if f1_score > best_f1:
+               # print("Updating best F1 score")
+                best_f1 = f1_score
                 best_threshold = round(threshold,2)
 
         if plot_f1:
+            print(f"Category {cat_id} ({ID2CLASS[cat_id]}):, best F1 score: {best_f1}, best threshold: {best_threshold}")
+            print("Recalls: ", [round(recall,2) for recall in recalls])
+            print("Thresholds: ", [round(thresh,2) for thresh in valid_thresholds])
+            print("TP: ", tp)
+            print("FN: ", fn)
+            print("GT: ", gt)
+            print("Ignored: ", ignored)
+            
             plt.plot(valid_thresholds, f1_scores, label=f'Category ID {cat_id} ({ID2CLASS[cat_id]})')
             plt.xlabel('Confidence Threshold')
-            plt.ylabel('F1 Score')
-            plt.title('F1 Score vs Confidence Threshold')
+            plt.ylabel('Recall')
+            plt.title('Recall vs Confidence Threshold')
             plt.legend()
             plt.grid()
             plt.show()
+            
 
-        
         if best_f1 > 0:
             optimal_thresholds[cat_id] = (best_threshold, best_f1)
         else:
@@ -301,6 +339,91 @@ def tune_confidence_threshold(annFile, resFile, threshold_range, plot_f1):
 
 
 if __name__ == '__main__':
+    optimal_thresholds_f1 = {
+        "1": 1.0,
+        "2": 1.0,
+        "3": 0.99,
+        "4": 0.81,
+        "5": 1.0,
+        "6": 1.0,
+        "7": 0.99,
+        "8": 1.0,
+        "11": 1.0,
+        "12": 0.49,
+        "13": 1.0,
+        "14": 0.94,
+        "15": 0.98,
+        "16": 1.0,
+        "17": 1.0,
+        "18": 1.0,
+        "19": 1.0,
+        "20": 0.98,
+        "21": 1.0,
+        "22": 0.88,
+        "23": 1.0,
+        "24": 1.0,
+        "25": 1.0,
+        "26": 1.0,
+        "27": 0.94,
+        "28": 0.97,
+        "29": 1.0,
+        "30": 0.99,
+        "31": 0.99,
+        "32": 1.0,
+        "37": 0.97,
+        "38": 0.99,
+        "39": 1.0,
+        "40": 0.94,
+        "41": 1.0,
+        "42": 1.0,
+        "43": 1.0,
+        "44": 0.98,
+        "45": 0.98,
+        "46": 0.99,
+        "47": 0.92,
+        "49": 1.0,
+        "50": 1.0,
+        "51": 0.99,
+        "52": 0.69,
+        "53": 0.95,
+        "54": 0.87,
+        "56": 1.0,
+        "57": 0.99,
+        "58": 1.0,
+        "59": 1.0,
+        "60": 0.99,
+        "61": 1.0,
+        "62": 1.0,
+        "63": 1.0,
+        "65": 1.0,
+        "66": 0.99,
+        "67": 1.0,
+        "68": 1.0,
+        "69": 0.99,
+        "71": 0.99,
+        "72": 1.0,
+        "73": 0.84,
+        "74": 1.0,
+        "76": 1.0,
+        "77": 0.99,
+        "79": 0.99,
+        "83": 0.99,
+        "84": 0.99,
+        "85": 0.98,
+        "86": 1.0,
+        "87": 0.98,
+        "88": 1.0,
+        "89": 0.96,
+        "90": 1.0,
+        "92": 0.99,
+        "93": 0.99,
+        "94": 0.99,
+        "95": 0.98,
+        "96": 1.0,
+        "48": 0.0,
+        "64": 0.0,
+        "75": 0.0,
+    }
 
     #annFile = 'coco-2017/raw/instances_val2017.json'
     annFile = "MGN/MGN_gt.json"
@@ -310,19 +433,21 @@ if __name__ == '__main__':
     #resFile = "Results/results_imgnet_coco_subset.json"   # Results file for the subset of the test set using \5 imgnet queries
     #resFile = "Results/results_MGN_val_run.json"  
     #resFile = "Results/results_MGN_subset.json"
-    resFile = "Results/results_MGN_eval_final.json"
+    resFile = "Results/results_MGN_5_shot_final.json"
     modify_json_lines(resFile)
     resFile = "testMGN.json" 
     
-    
+
+    cat_ap = evaluate(annFile, resFile, plot_pr = False, per_category = True)
+    """
     category_metrics = evaluate_per_category_metrics(annFile, resFile)
     
     print("\nPer-Category Metrics:")
     for catId, metrics in category_metrics.items():
         cat_name = ID2CLASS[catId]
-        print(f"Category {catId} ({cat_name}): Precision = {metrics['precision']:.4f}, Recall = {metrics['recall']:.4f}, F1 Score = {metrics['f1_score']:.4f}, Accuracy = {metrics['accuracy']:.4f}")
+        print(f"Category {catId} ({cat_name}): Precision = {metrics['precision']:.4f}, Recall = {metrics['recall']:.4f}, F1 Score = {metrics['f1_score']:.4f}")
     
-    """
+    
     cat_ap = evaluate(annFile, resFile, plot_pr = False, per_category = True)
    
     
@@ -334,9 +459,10 @@ if __name__ == '__main__':
    
     
     # Tune confidence threshold
-    thresholds = np.arange(0.1, 1.0, 0.05)
-    cat_ids, optimal_thresholds = tune_confidence_threshold(annFile, resFile, thresholds, plot_f1=True)
+    thresholds = np.arange(0.1, 1.01, 0.01)
+    cat_ids, optimal_thresholds = tune_confidence_threshold(annFile, resFile, thresholds, plot_f1=False)
 
     print("Categories evaluated: ", cat_ids)
     print("Optimal thresholds and F1 scores: ", optimal_thresholds)
+
     """
