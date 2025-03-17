@@ -1,4 +1,4 @@
-#One-Shot Object Detection
+# One-Shot Object Detection
 This project implements state-of-the-art zero, one, and few-shot image-guided object detection using the OWLv2 model. It features a highly flexible, end-to-end pipeline, designed with a variety of user-configurable parameters to cater to diverse use cases.
 
 Key features include:
